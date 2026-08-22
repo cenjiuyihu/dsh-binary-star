@@ -1,7 +1,7 @@
 {
   "name": "dsh-binary-star-host",
   "version": "0.1.0",
-  "description": "双星系统宿主插件：心跳发射（L1 检测线）+ L3 自检（配置结构校验上报 degraded）",
+  "description": "双星系统宿主插件：心跳发射（L1 检测线）；L2 功能探针 / L3 自检 / 账本钩子在 P2 扩展",
   "type": "module",
   "main": "src/index.js",
   "exports": {

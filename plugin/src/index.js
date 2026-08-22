@@ -1,7 +1,14 @@
 // dsh-binary-star-host — 双星系统宿主插件。
 //
-// L1 心跳发射器 + L3 自检（配置结构校验 → health 降级上报 degraded）。
-// 不依赖任何 dsh 服务（timer/fs 均用 Node 原生），保证最小 profile 也能跑。
+// P1：L1 心跳发射器。
+// P2：L3 自检（配置干跑式轻量校验）→ 心跳 health 降级上报（degraded），
+//     让监督者能识别"进程活但配置被改坏"（事故 1 模式，无需等崩溃）。
+//
+// 设计要点（企划 §4 / §14.2）：
+//  - 心跳文件是卫星/监督者判断主星生死的唯一事实来源（单机文件通信，无网络依赖）；
+//  - 心跳必须"宿主进程活着就写"——即使会话层坏了，心跳仍在，
+//    由 L2 功能探针 / L3 自检把 health 字段降为非 ok 来暴露功能层故障；
+//  - 本插件不依赖任何 dsh 服务（timer/fs 均用 Node 原生），保证最小 profile 也能跑。
 //
 // 环境变量（由监督者注入）：
 //  DSH_BINARY_STATE            状态目录（heartbeat/ 所在处）
@@ -55,6 +62,7 @@ export function apply(ctx) {
   const file = path.join(dir, `${role}.json`)
   const bootTs = Date.now()
 
+  // L3 自检结果缓存（每次心跳写时带上）
   let lastHealth = 'ok'
   let lastDetail = null
 

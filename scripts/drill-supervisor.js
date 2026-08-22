@@ -1,9 +1,14 @@
 "use strict";
 /**
- * 沙箱演练 A/B：杀主星→快速路径重启；改坏配置+open 账目→崩溃→阶梯回滚。
+ * P1b 沙箱演练（验收）：
+ *  演练 A — 监督者拉起沙箱主星 → 心跳出现 → 杀进程树 → 快速路径自动重启 → 探针判好
+ *  演练 B — 改坏 cordis.patch.yml + 留下一笔 open 账目 → 杀进程（模拟崩溃）
+ *           → 慢速路径（修复阶梯）→ 第 2 步回滚账目 → 重启 → 探针通过 → 状态恢复
+ *
  * 安全边界：只操作沙箱 profile（profiles/sbx/*）与独立状态目录（binary-star-sbx）；
  * 快照 scope 为空，任何一步都不可能触碰真实 web profile。
- * 顶部常量为本机环境配置，按需修改。
+ *
+ * 用法: node scripts/drill-supervisor.js
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -32,9 +37,11 @@ async function main() {
     else { fail++; console.log(`[FAIL] ${name} ${detail}`); }
   };
 
+  // ── 预检 ──────────────────────────────────────────────
   check("沙箱 profile 存在", fs.existsSync(PATCH_FILE));
   check("插件 junction 存在", fs.existsSync("C:/Users/cxm20/.dsh/profiles/sbx/node_modules/dsh-binary-star-host/package.json"));
 
+  // 干净起跑：杀掉可能残留的沙箱进程
   const pre = hb.readHeartbeat(p.heartbeat, "primary");
   if (pre && pre.pid && hb.isPidAlive(pre.pid)) {
     console.log(`[drill] 清理残留主星 pid=${pre.pid}`);
@@ -42,6 +49,7 @@ async function main() {
     await sleep(3000);
   }
 
+  // ── 演练 A：快速路径 ───────────────────────────────────
   console.log("\n=== 演练 A：启动 → 心跳 → 杀进程 → 快速路径重启 ===");
   sup.spawnPrimary();
   await sleep(15000);
@@ -52,6 +60,7 @@ async function main() {
 
   killTree(pid1);
   await sleep(3000);
+  // 心跳判死窗口是 30s（3 × 10s），这里只验证进程已死（监督者按 PID 探测判死）
   check("杀后进程已死", !hb.isPidAlive(pid1), `pid=${pid1}`);
 
   const fast = await sup.fastPath("D1");
@@ -61,6 +70,7 @@ async function main() {
   const st1 = state.readState(p.stateFile);
   check("状态回到 RUNNING", st1.primary.state === "RUNNING", st1.primary.state);
 
+  // ── 演练 B：账本崩溃回滚 ───────────────────────────────
   console.log("\n=== 演练 B：改坏配置 + open 账目 + 崩溃 → 阶梯自动回滚 ===");
   const original = fs.readFileSync(PATCH_FILE, "utf8");
   const backupDir = path.join(p.snapshots, "drill-backup");
@@ -81,7 +91,7 @@ async function main() {
   fs.appendFileSync(PATCH_FILE, "\n- insert:\n    - name: dsh-binary-star-nonexistent\n");
   check("坏行已写入（模拟破坏）", fs.readFileSync(PATCH_FILE, "utf8").includes("dsh-binary-star-nonexistent"));
 
-  killTree(h2.pid);
+  killTree(h2.pid); // 模拟改到一半崩溃
   await sleep(3000);
 
   const slow = await sup.slowPath("D1");
@@ -96,6 +106,7 @@ async function main() {
   const st2 = state.readState(p.stateFile);
   check("状态恢复（RUNNING/HANDED-BACK）", st2.primary.state === "RUNNING" || st2.primary.state === "HANDED-BACK", st2.primary.state);
 
+  // ── 清理 ──────────────────────────────────────────────
   console.log("\n=== 清理 ===");
   const hLast = hb.readHeartbeat(p.heartbeat, "primary");
   if (hLast && hLast.pid) killTree(hLast.pid);

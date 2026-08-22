@@ -1,8 +1,13 @@
 "use strict";
 /**
- * 沙箱演练 C：真实监视循环（tick）下的"杀主星 → 自动重启"。
- * 语义：干净起跑（重置 state/心跳/锁）；"健康"必须由监督者确认（state.since 晚于本次启动）；
- * 恢复判定同理（state.since 晚于杀进程时刻）。
+ * P1b 演练 C：真实监视循环（tick）下的"杀主星 → 自动重启"。
+ *
+ * 语义（吸取 2026-08-21 的教训）：
+ *  - 干净起跑：重置 state/心跳/锁文件，防上一轮遗留数据骗过检查；
+ *  - "健康"必须由监督者确认：state.primary.since 晚于本次演练启动（不是遗留的 RUNNING）；
+ *  - 恢复判定同理：state.primary.since 晚于杀进程时刻。
+ *
+ * 用法: node scripts/drill-loop.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -38,6 +43,8 @@ async function main() {
 
   console.log("=== 演练 C：真实监督者循环（tick）→ 杀主星 → 自动重启 ===");
 
+  // ── 干净起跑 ──────────────────────────────────────────
+  // 1) 杀掉残留进程（按心跳 pid 与命令行双保险）
   const pre = readJson(HB_FILE);
   if (pre && pre.pid && isPidAlive(pre.pid)) {
     console.log(`[drill] 清理残留主星 pid=${pre.pid}`);
@@ -58,18 +65,22 @@ async function main() {
   let stray = killMatching("--profile sbx", "游离 sbx 主星");
   let straySup = killMatching("binary-star*cli.js", "游离监督者");
   if (stray || straySup) await sleep(3000);
+  // 2) 重置状态/心跳/锁（防遗留数据骗过检查）
   for (const f of [STATE_FILE, HB_FILE, LOCK_FILE]) { try { fs.rmSync(f, { force: true }); } catch {} }
   const drillStart = Date.now();
 
+  // ── 启动监督者（真实 tick 循环）────────────────────────
   const sup = spawn(process.execPath, ["src/cli.js", "start"], {
     cwd: PROJECT,
     env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  sup.stdout.on("data", (d) => process.stdout.write(`[supervisor] ${String(d).trim()}\n`));
-  sup.stderr.on("data", (d) => process.stderr.write(`[supervisor:err] ${String(d).trim()}\n`));
+  const logStream = fs.createWriteStream("D:/DSH/.binary-star/drillC.log", { flags: "a" });
+  sup.stdout.on("data", (d) => { const s = String(d); process.stdout.write(`[supervisor] ${s.trim()}\n`); logStream.write(s); });
+  sup.stderr.on("data", (d) => { const s = String(d); process.stderr.write(`[supervisor:err] ${s.trim()}\n`); logStream.write(s); });
 
+  // ── 等待监督者确认健康（state 由本次运行的健康分支写入）─
   let h1 = null, st1 = null;
   for (let i = 0; i < 12; i++) {
     await sleep(5000);
@@ -86,6 +97,7 @@ async function main() {
   const pid1 = h1 && h1.pid;
   check("心跳 PID 存在且存活", pid1 && isPidAlive(pid1), `pid=${pid1}`);
 
+  // ── 杀主星 → 等待监督者自动重启并重新确认健康 ─────────
   console.log(`\n[drill] 杀主星 pid=${pid1}`);
   killTree(pid1);
   const killTime = Date.now();
@@ -106,6 +118,7 @@ async function main() {
   check("监督者循环自动重启主星", recovered,
     `state=${st2 && st2.primary.state} since=${st2 && st2.primary.since} pid=${h2 && h2.pid} old=${pid1}`);
 
+  // ── 清理：杀监督者 + 主星，验证死透 ────────────────────
   console.log("\n=== 清理 ===");
   if (h2 && h2.pid) killTree(h2.pid);
   killTree(sup.pid);

@@ -1,38 +1,28 @@
 "use strict";
 /**
- * 部署脚本：把 binary-star 宿主插件挂进目标 profile。
- * ⚠️ 默认目标为真实 web profile（会修改真实部署）——仅在确认后运行。
+ * P5 上线脚本：把 binary-star 宿主插件挂进目标 profile。
+ * ⚠️ 默认目标为真实 web profile（会修改真实部署）——仅在批准后运行。
  * 可用环境变量指定其他目标（用于彩排）：DSH_DEPLOY_PATCH / DSH_DEPLOY_NM /
  * DSH_DEPLOY_PROFILE / DSH_DEPLOY_CWD / DSH_DEPLOY_BIN / DSH_DEPLOY_STATE。
+ *
+ * 用法: node scripts/deploy-live.js
  */
 const fs = require("node:fs");
 const path = require("node:path");
-const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
-const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
-const PATCH = process.env.DSH_DEPLOY_PATCH || path.join(DSH_HOME, "profiles/web/cordis.patch.yml");
-const WEB_NM = process.env.DSH_DEPLOY_NM || path.join(DSH_HOME, "profiles/web/node_modules");
+const PATCH = process.env.DSH_DEPLOY_PATCH || "C:/Users/cxm20/.dsh/profiles/web/cordis.patch.yml";
+const WEB_NM = process.env.DSH_DEPLOY_NM || "C:/Users/cxm20/.dsh/profiles/web/node_modules";
 const PROFILE = process.env.DSH_DEPLOY_PROFILE || "web";
 const CWD = process.env.DSH_DEPLOY_CWD || "D:/DSH";
-const BIN = process.env.DSH_DEPLOY_BIN || ""; // 留空则从 $NPM_ROOT 推导
-const STATE = process.env.DSH_DEPLOY_STATE || path.join(DSH_HOME, "binary-star");
+const BIN = process.env.DSH_DEPLOY_BIN || "C:/Users/cxm20/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js";
+const STATE = process.env.DSH_DEPLOY_STATE || "C:/Users/cxm20/.dsh/binary-star";
 const JUNCTION = path.join(WEB_NM, "dsh-binary-star-host");
-const PLUGIN = path.join(__dirname, "..", "plugin");
-const ROW = "\n# binary-star 宿主插件（双星系统：心跳/自检）\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
-
-function resolveBin() {
-  if (BIN) return BIN;
-  const comSpec = process.env.ComSpec || "cmd.exe";
-  const r = spawnSync(comSpec, ["/c", "npm.cmd root -g"], { encoding: "utf8", windowsHide: true, timeout: 20000 });
-  const root = r.status === 0 ? String(r.stdout || "").trim().split(/\r?\n/)[0] : "";
-  return root ? path.join(root, "@deepseek-ai", "dsh", "lib", "bin.js") : "";
-}
+const PLUGIN = "D:/DSH/binary-star/plugin";
+const ROW = "\n# ── binary-star 宿主插件（双星系统：心跳/自检；2026-08 上线）──\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
 
 function runDump() {
-  const bin = resolveBin();
-  if (!bin) return { status: -1 };
-  return spawnSync(process.execPath, [bin, "--profile", PROFILE, "--dump-config"], {
+  return spawnSync(process.execPath, [BIN, "--profile", PROFILE, "--dump-config"], {
     cwd: CWD, encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"],
   });
 }
@@ -45,8 +35,8 @@ console.log(`=== 双星系统部署（目标 profile: ${PROFILE}）===`);
 
 // 1) 预检
 const base = runDump();
-if (base.status !== 0) { console.error(`预检失败：profile "${PROFILE}" 组合树不可解析，先修复再部署`); process.exit(2); }
-if (hasRow()) { console.error("已部署过（patch 含 binary-star-host），退出"); process.exit(0); }
+if (base.status !== 0) { console.error(`预检失败：profile "${PROFILE}" 组合树不可解析，先修复再上线`); process.exit(2); }
+if (hasRow()) { console.error("已上线过（patch 含 binary-star-host），退出"); process.exit(0); }
 console.log("[1/5] 预检通过：基线组合树健康");
 
 // 2) 备份
@@ -56,7 +46,7 @@ fs.mkdirSync(backupDir, { recursive: true });
 fs.copyFileSync(PATCH, path.join(backupDir, "cordis.patch.yml"));
 console.log(`[2/5] 已备份 cordis.patch.yml → ${backupDir}`);
 
-// 3) junction（幂等）
+// 3) junction（幂等；PowerShell New-Item 在本环境验证可用，cmd mklink 不稳定）
 if (!fs.existsSync(JUNCTION)) {
   const r = spawnSync("powershell", [
     "-NoProfile", "-Command",
@@ -80,8 +70,9 @@ if (after.status !== 0) {
 }
 console.log("[5/5] 验证通过：组合树健康（含 binary-star-host）");
 
-console.log("\n=== 部署完成 ===");
+console.log("\n=== 上线完成 ===");
 console.log("生效方式：配置 HMR 可能已实时生效；若心跳文件未出现，需重启主星一次。");
-console.log(`回滚：  copy "${path.join(backupDir, "cordis.patch.yml")}" "${PATCH}"`);
-console.log(`        rmdir "${JUNCTION}"`);
-console.log("基线快照：node src/cli.js snapshot baseline");
+console.log("验证：  node D:\\DSH\\binary-star\\src\\cli.js status");
+console.log("回滚：  copy \"" + path.join(backupDir, "cordis.patch.yml") + "\" \"" + PATCH + "\"");
+console.log("        rmdir \"" + JUNCTION + "\"");
+console.log("基线快照：node D:\\DSH\\binary-star\\src\\cli.js snapshot baseline");

@@ -1,7 +1,12 @@
 "use strict";
 /**
- * 沙箱演练 P2：卫星实例心跳 / L3 自检 degraded 上报 / dump-config 冒烟。
+ * P2 验证：
+ *  A) 卫星实例启动 → satellite.json 心跳（role/token 正确）
+ *  B) L3 自检：改坏 sbx patch → 心跳 health=degraded（无需崩溃）→ 还原 → 恢复 ok
+ *  C) 阶梯第 1 步升级：`--dump-config` 冒烟对坏 patch 非零退出、好 patch 零退出
+ *
  * 安全边界：只改 profiles/sbx/cordis.patch.yml（沙箱），绝不碰 profiles/web。
+ * 用法: node scripts/drill-p2.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
@@ -23,10 +28,12 @@ async function main() {
     else { fail++; console.log(`[FAIL] ${name} ${detail}`); }
   };
 
+  // 干净起跑
   const pre = readJson(HB_FILE);
   if (pre && pre.pid && alive(pre.pid)) killTree(pre.pid);
   for (const f of [HB_FILE]) { try { fs.rmSync(f, { force: true }); } catch {} }
 
+  // ── A: 卫星实例心跳 ────────────────────────────────────
   console.log("=== A: 卫星实例 ===");
   const sat = spawn(process.execPath, [BIN, "--profile", "satellite", "--port", "3181"], {
     cwd: "D:/DSH/.binary-star/sat-workspace",
@@ -54,6 +61,7 @@ async function main() {
   check("卫星心跳 token 正确", h && h.token === "p2-test-token");
   check("卫星进程存活", sat.exitCode === null && h && alive(h.pid));
 
+  // ── B: L3 自检降级 ─────────────────────────────────────
   console.log("\n=== B: L3 自检（改坏 sbx patch → degraded → 还原）===");
   const original = fs.readFileSync(SBX_PATCH, "utf8");
   const broken = original.replace(/^\s*- id:\s*binary-star-host\s*$/m, "  - no-id-here");
@@ -78,6 +86,7 @@ async function main() {
   }
   check("还原后心跳恢复 ok", h && h.health === "ok", JSON.stringify(h && h.health));
 
+  // ── C: dump-config 冒烟（阶梯第 1 步升级）──────────────
   console.log("\n=== C: --dump-config 冒烟 ===");
   const runDump = () => spawnSync(process.execPath, [BIN, "--profile", "sbx", "--dump-config"], {
     cwd: "D:/DSH/.binary-star/sbx-workspace",
@@ -85,6 +94,7 @@ async function main() {
     timeout: 30000,
     stdio: ["ignore", "pipe", "pipe"],
   });
+  // 用例：真实语法损坏（YAML 未闭合列表）——加载器无法解析，dump-config 必须非零退出
   fs.writeFileSync(SBX_PATCH, original + "\n- insert: [\n    - id: broken\n");
   const bad = runDump();
   check("坏 patch 时 dump-config 非零退出（能发现故障）", bad.status !== 0, `status=${bad.status}`);
@@ -92,6 +102,7 @@ async function main() {
   const good = runDump();
   check("好 patch 时 dump-config 零退出", good.status === 0, `status=${good.status}`);
 
+  // 清理
   console.log("\n=== 清理 ===");
   if (h && h.pid) killTree(h.pid);
   killTree(sat.pid);
