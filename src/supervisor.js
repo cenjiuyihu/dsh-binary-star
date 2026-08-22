@@ -28,7 +28,7 @@ function killTree(pid) {
   return r.status === 0;
 }
 
-/** 会话目录编码（与 dsh 会话存储一致）：D:\DSH → --D-DSH-- */
+/** 会话目录编码（与 dsh 会话存储一致）：把工作区路径里的 \ / : 替换为 - 并夹在 -- 之间 */
 function encodeWorkspace(cwd) {
   return "--" + String(cwd).replace(/[\\/:]/g, "-") + "--";
 }

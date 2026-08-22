@@ -7,16 +7,24 @@
  *  - "健康"必须由监督者确认：state.primary.since 晚于本次演练启动（不是遗留的 RUNNING）；
  *  - 恢复判定同理：state.primary.since 晚于杀进程时刻。
  *
+ * 本脚本不含硬编码绝对路径：以下常量均在运行时推导（也可用环境变量覆盖）：
+ *   DSH_SBX_CONFIG / DSH_SBX_STATE
  * 用法: node scripts/drill-loop.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const PROJECT = "D:/DSH/binary-star";
-const SANDBOX_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
-const STATE_FILE = "C:/Users/cxm20/.dsh/binary-star-sbx/state.json";
-const HB_FILE = "C:/Users/cxm20/.dsh/binary-star-sbx/heartbeat/primary.json";
-const LOCK_FILE = "C:/Users/cxm20/.dsh/binary-star-sbx/locks/supervisor.lock";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const STATE = process.env.DSH_SBX_STATE || path.join(HOME, ".dsh", "binary-star-sbx").replace(/\\/g, "/");
+const STATE_FILE = `${STATE}/state.json`;
+const HB_FILE = `${STATE}/heartbeat/primary.json`;
+const LOCK_FILE = `${STATE}/locks/supervisor.lock`;
+const DRILL_LOG = path.join(SBX_ROOT, "drillC.log");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function killTree(pid) {
@@ -71,12 +79,12 @@ async function main() {
 
   // ── 启动监督者（真实 tick 循环）────────────────────────
   const sup = spawn(process.execPath, ["src/cli.js", "start"], {
-    cwd: PROJECT,
+    cwd: ROOT,
     env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
-  const logStream = fs.createWriteStream("D:/DSH/.binary-star/drillC.log", { flags: "a" });
+  const logStream = fs.createWriteStream(DRILL_LOG, { flags: "a" });
   sup.stdout.on("data", (d) => { const s = String(d); process.stdout.write(`[supervisor] ${s.trim()}\n`); logStream.write(s); });
   sup.stderr.on("data", (d) => { const s = String(d); process.stderr.write(`[supervisor:err] ${s.trim()}\n`); logStream.write(s); });
 

@@ -5,21 +5,27 @@
  * 可用环境变量指定其他目标（用于彩排）：DSH_DEPLOY_PATCH / DSH_DEPLOY_NM /
  * DSH_DEPLOY_PROFILE / DSH_DEPLOY_CWD / DSH_DEPLOY_BIN / DSH_DEPLOY_STATE。
  *
+ * 本脚本不含硬编码绝对路径：默认值均在运行时推导
+ * （HOME = 用户主目录；BIN = npm 全局目录下的 dsh bin.js；PLUGIN = 本仓库 plugin/），
+ * 请确认推导结果与你部署环境一致，或用 DSH_DEPLOY_* 覆盖。
+ *
  * 用法: node scripts/deploy-live.js
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
-const PATCH = process.env.DSH_DEPLOY_PATCH || "C:/Users/cxm20/.dsh/profiles/web/cordis.patch.yml";
-const WEB_NM = process.env.DSH_DEPLOY_NM || "C:/Users/cxm20/.dsh/profiles/web/node_modules";
+const HOME = os.homedir();
+const PATCH = process.env.DSH_DEPLOY_PATCH || path.join(HOME, ".dsh", "profiles", "web", "cordis.patch.yml");
+const WEB_NM = process.env.DSH_DEPLOY_NM || path.join(HOME, ".dsh", "profiles", "web", "node_modules");
 const PROFILE = process.env.DSH_DEPLOY_PROFILE || "web";
-const CWD = process.env.DSH_DEPLOY_CWD || "D:/DSH";
-const BIN = process.env.DSH_DEPLOY_BIN || "C:/Users/cxm20/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js";
-const STATE = process.env.DSH_DEPLOY_STATE || "C:/Users/cxm20/.dsh/binary-star";
+const CWD = process.env.DSH_DEPLOY_CWD || process.cwd();
+const BIN = process.env.DSH_DEPLOY_BIN || path.join(HOME, "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+const STATE = process.env.DSH_DEPLOY_STATE || path.join(HOME, ".dsh", "binary-star");
 const JUNCTION = path.join(WEB_NM, "dsh-binary-star-host");
-const PLUGIN = "D:/DSH/binary-star/plugin";
-const ROW = "\n# ── binary-star 宿主插件（双星系统：心跳/自检；2026-08 上线）──\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
+const PLUGIN = path.join(__dirname, "..", "plugin");
+const ROW = "\n# ── binary-star 宿主插件（双星系统：心跳/自检）──\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
 
 function runDump() {
   return spawnSync(process.execPath, [BIN, "--profile", PROFILE, "--dump-config"], {
@@ -72,7 +78,7 @@ console.log("[5/5] 验证通过：组合树健康（含 binary-star-host）");
 
 console.log("\n=== 上线完成 ===");
 console.log("生效方式：配置 HMR 可能已实时生效；若心跳文件未出现，需重启主星一次。");
-console.log("验证：  node D:\\DSH\\binary-star\\src\\cli.js status");
+console.log("验证：  node src/cli.js status （在项目根运行）");
 console.log("回滚：  copy \"" + path.join(backupDir, "cordis.patch.yml") + "\" \"" + PATCH + "\"");
 console.log("        rmdir \"" + JUNCTION + "\"");
-console.log("基线快照：node D:\\DSH\\binary-star\\src\\cli.js snapshot baseline");
+console.log("基线快照：node src/cli.js snapshot baseline （在项目根运行）");

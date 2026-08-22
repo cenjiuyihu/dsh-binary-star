@@ -19,5 +19,8 @@
 ## 关于演练脚本
 
 `scripts/drill-*.js` 与 `scripts/diag-*.js` 是环境特定的自足演练工具：
-文件顶部常量为本机路径（如 `D:/DSH`、`$HOME/.dsh/binary-star-sbx`），
-运行前请按你的环境修改顶部常量（详见 `docs/drills.md`）。
+为不暴露作者机器的路径，脚本内**不含任何硬编码绝对路径**——所有路径均在运行时推导
+（`os.homedir()` 用户主目录、`__dirname` 项目根、沙箱演练布局 `../.binary-star`），
+并可用环境变量覆盖（如 `DSH_BIN`、`DSH_SBX_STATE`、`DSH_SBX_PATCH`）。
+如果你复制到自己的环境运行，请核对推导出的路径是否与你的沙箱布局一致
+（详见 `docs/drills.md`）。

@@ -111,7 +111,7 @@ function extractMessages(lines, n) {
 
 /**
  * 提取种子并写文件。
- * @param sessionsRoot 主星工作区会话根（如 <DSH_HOME>/sessions/--D-DSH--）
+ * @param sessionsRoot 主星工作区会话根（如 <DSH_HOME>/sessions/<工作区编码目录>）
  * @param stateDir     双星状态目录（seed/ 写到这里）
  * @param n            最近 N 条消息
  */

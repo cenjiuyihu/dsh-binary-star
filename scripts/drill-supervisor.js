@@ -8,13 +8,20 @@
  * 安全边界：只操作沙箱 profile（profiles/sbx/*）与独立状态目录（binary-star-sbx）；
  * 快照 scope 为空，任何一步都不可能触碰真实 web profile。
  *
+ * 本脚本不含硬编码绝对路径：以下常量均在运行时推导（也可用环境变量覆盖）：
+ *   DSH_SBX_CONFIG / DSH_SBX_PATCH
  * 用法: node scripts/drill-supervisor.js
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 
-const SANDBOX_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
-const PATCH_FILE = "C:/Users/cxm20/.dsh/profiles/sbx/cordis.patch.yml";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const PATCH_FILE = process.env.DSH_SBX_PATCH || path.join(HOME, ".dsh", "profiles", "sbx", "cordis.patch.yml").replace(/\\/g, "/");
+const SBX_JUNCTION_PKG = path.join(HOME, ".dsh", "profiles", "sbx", "node_modules", "dsh-binary-star-host", "package.json");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
@@ -39,7 +46,7 @@ async function main() {
 
   // ── 预检 ──────────────────────────────────────────────
   check("沙箱 profile 存在", fs.existsSync(PATCH_FILE));
-  check("插件 junction 存在", fs.existsSync("C:/Users/cxm20/.dsh/profiles/sbx/node_modules/dsh-binary-star-host/package.json"));
+  check("插件 junction 存在", fs.existsSync(SBX_JUNCTION_PKG));
 
   // 干净起跑：杀掉可能残留的沙箱进程
   const pre = hb.readHeartbeat(p.heartbeat, "primary");

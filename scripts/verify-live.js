@@ -2,6 +2,11 @@
 /**
  * P5 上线后验收（只读，可重复运行）：
  * 检查真实部署的 4 项关键状态，全部 PASS 即上线成功。
+ *
+ * 本脚本不含硬编码绝对路径：默认值均在运行时推导
+ * （HOME = 用户主目录；BIN = npm 全局目录下的 dsh bin.js；PLUGIN = 本仓库 plugin/），
+ * 也可用 DSH_VERIFY_* 环境变量覆盖。
+ *
  * 用法: node scripts/verify-live.js
  */
 const fs = require("node:fs");
@@ -9,15 +14,15 @@ const path = require("node:path");
 const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
-// 本机路径均可 env 覆盖（DSH_VERIFY_*），默认值与当前部署一致
-const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
-const BIN = process.env.DSH_VERIFY_BIN || "C:/Users/cxm20/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js";
-const PATCH = process.env.DSH_VERIFY_PATCH || path.join(DSH_HOME, "profiles/web/cordis.patch.yml");
-const JUNCTION = process.env.DSH_VERIFY_JUNCTION || path.join(DSH_HOME, "profiles/web/node_modules/dsh-binary-star-host");
-const PLUGIN = process.env.DSH_VERIFY_PLUGIN || "D:/DSH/binary-star/plugin";
-const HB = process.env.DSH_VERIFY_HB || path.join(DSH_HOME, "binary-star/heartbeat/primary.json");
-const STATE = process.env.DSH_VERIFY_STATE || path.join(DSH_HOME, "binary-star/state.json");
-const CWD = process.env.DSH_VERIFY_CWD || "D:/DSH";
+const HOME = os.homedir();
+const DSH_HOME = process.env.DSH_HOME || path.join(HOME, ".dsh");
+const BIN = process.env.DSH_VERIFY_BIN || path.join(HOME, "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js");
+const PATCH = process.env.DSH_VERIFY_PATCH || path.join(DSH_HOME, "profiles", "web", "cordis.patch.yml");
+const JUNCTION = process.env.DSH_VERIFY_JUNCTION || path.join(DSH_HOME, "profiles", "web", "node_modules", "dsh-binary-star-host");
+const PLUGIN = process.env.DSH_VERIFY_PLUGIN || path.join(__dirname, "..", "plugin");
+const HB = process.env.DSH_VERIFY_HB || path.join(DSH_HOME, "binary-star", "heartbeat", "primary.json");
+const STATE = process.env.DSH_VERIFY_STATE || path.join(DSH_HOME, "binary-star", "state.json");
+const CWD = process.env.DSH_VERIFY_CWD || process.cwd();
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = "") => {
