@@ -9,13 +9,21 @@ const os = require("node:os");
 const { spawnSync } = require("node:child_process");
 
 const DSH_HOME = process.env.DSH_HOME || path.join(os.homedir(), ".dsh");
-const BIN = process.env.DSH_VERIFY_BIN || "";
+const BIN = process.env.DSH_VERIFY_BIN || ""; // 留空则从 $NPM_ROOT 推导
 const PATCH = process.env.DSH_VERIFY_PATCH || path.join(DSH_HOME, "profiles/web/cordis.patch.yml");
 const JUNCTION = process.env.DSH_VERIFY_JUNCTION || path.join(DSH_HOME, "profiles/web/node_modules/dsh-binary-star-host");
 const PLUGIN = process.env.DSH_VERIFY_PLUGIN || "";
 const HB = process.env.DSH_VERIFY_HB || path.join(DSH_HOME, "binary-star/heartbeat/primary.json");
 const STATE = process.env.DSH_VERIFY_STATE || path.join(DSH_HOME, "binary-star/state.json");
 const CWD = process.env.DSH_VERIFY_CWD || "D:/DSH";
+
+function resolveBin() {
+  if (BIN) return BIN;
+  const comSpec = process.env.ComSpec || "cmd.exe";
+  const r = spawnSync(comSpec, ["/c", "npm.cmd root -g"], { encoding: "utf8", windowsHide: true, timeout: 20000 });
+  const root = r.status === 0 ? String(r.stdout || "").trim().split(/\r?\n/)[0] : "";
+  return root ? path.join(root, "@deepseek-ai", "dsh", "lib", "bin.js") : "";
+}
 
 let pass = 0, fail = 0;
 const check = (name, cond, detail = "") => {
@@ -26,11 +34,16 @@ const check = (name, cond, detail = "") => {
 console.log("=== 双星系统部署验收（只读）===");
 
 // 1) 组合树健康且含新行
-const dump = spawnSync(process.execPath, [BIN || "dsh", "web", "--dump-config"], {
-  cwd: CWD, encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"],
-});
-check("web 组合树可解析（dump-config 退出 0）", dump.status === 0, `status=${dump.status}`);
-check("组合树含 binary-star-host 行", dump.status === 0 && dump.stdout.includes("binary-star-host"));
+const bin = resolveBin();
+if (!bin) {
+  check("解析 dsh bin.js 路径", false, "npm root -g 失败，请用 DSH_VERIFY_BIN 指定");
+} else {
+  const dump = spawnSync(process.execPath, [bin, "web", "--dump-config"], {
+    cwd: CWD, encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"],
+  });
+  check("web 组合树可解析（dump-config 退出 0）", dump.status === 0, `status=${dump.status}`);
+  check("组合树含 binary-star-host 行", dump.status === 0 && dump.stdout.includes("binary-star-host"));
+}
 
 // 2) junction
 const jExists = fs.existsSync(path.join(JUNCTION, "package.json"));
