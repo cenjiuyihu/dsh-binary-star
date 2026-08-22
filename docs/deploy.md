@@ -5,7 +5,7 @@
 ## 前置
 
 - Node.js >= 20（含 `node:zlib` 的 zstd 支持）
-- 全局安装 dsh：`npm install -g @deepseek-ai/dsh`（适配 0.1.0-rc.7）
+- 全局安装 dsh：`npm install -g @deepseek-ai/dsh`（适配 0.1.0-rc.8）
 - 确认 dsh 可运行：`dsh web` 能启动
 
 ## 配置
@@ -38,6 +38,33 @@ node scripts/verify-live.js
 ```
 
 只读检查：组合树可解析且含新行 / junction / patch 行 / 心跳存在+健康+新鲜 / 状态文件。监督者未启动时 token=none 与 state.json 缺失为预期。
+
+## 升级 dsh 版本（兼容流程）
+
+```bash
+# 1. 暂停自动修复 + 打升级前快照
+New-Item -ItemType File control/halt
+node src/cli.js snapshot baseline-pre-upgrade
+
+# 2. 升级 npm 全局包
+npm install -g @deepseek-ai/dsh@<新版本>
+
+# 3. 客户端定制若被覆盖，重跑 ui-patch（本仓库不携带；部署方自己的脚本）
+#    anchor 失配 = 新版本改了 bundle 结构，需按新结构更新补丁
+
+# 4. 冒烟：组合树可解析
+node <dsh>/lib/bin.js --profile web --dump-config
+
+# 5. 受控重启验证（写 restart-request.json，监督者执行重启+探针）
+node src/cli.js journal open --desc "dsh 升级验证"
+# 写 control/restart-request.json {journalEntryId, desc} → 监督者受控重启 → 探针
+node src/cli.js journal commit <id>
+
+# 6. 验收
+node scripts/verify-live.js
+```
+
+> 注意：受控重启会短暂中断当前对话（秒级~1 分钟）；若端口未及时释放，阶梯会自动重试，属预期行为。
 
 ## 卫星副本 profile
 

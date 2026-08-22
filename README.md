@@ -3,7 +3,7 @@
 让 DeepSeek Harness (DSH) 智能体拥有"把自己搞坏后能自己修好"的能力：
 **主星干活，卫星（副本 profile）待命，监督者（纯 Node、无 LLM）负责监视、修复、顶班。**
 
-> 本项目由 AI 辅助开发。适用 Windows；dsh 版本 0.1.0-rc.7。
+> 本项目由 AI 辅助开发。适用 Windows；dsh 版本 0.1.0-rc.8（0.1.0-rc.7 → rc.8 升级已验证通过）。
 
 ## 特性
 
@@ -30,7 +30,7 @@
 
 ## 快速开始
 
-前置：Node.js >= 20、全局安装 `@deepseek-ai/dsh`（本项目适配 0.1.0-rc.7）。
+前置：Node.js >= 20、全局安装 `@deepseek-ai/dsh`（本项目适配 0.1.0-rc.8）。
 
 ```bash
 # 1. 部署宿主插件到真实 web profile（自动备份 + 验证，可回滚）
@@ -38,45 +38,24 @@ node scripts/deploy-live.js
 
 # 2. 验收（只读 11 项检查）
 node scripts/verify-live.js
-
-# 3. 启动监督者（前台常驻；或用你的桌面壳/任务计划托管）
-node src/cli.js start
-
-# 4. 状态
-node src/cli.js status
 ```
-
-路径配置：`config.default.json` 支持占位符——`$HOME`（用户主目录）、`$CWD`（运行目录）、`$NPM_ROOT`（npm 全局根，自动解析）；也可用环境变量覆盖：`DSH_BINARY_CONFIG`、`DSH_BINARY_STATE`、`DSH_BINARY_DSH_HOME`。
 
 ## 命令
 
-```bash
-dsh-binary start | stop | status | snapshot <tag> | repair --now | halt
-dsh-binary journal open|commit|rollback|list
-dsh-binary takeover --now | --undo
-```
-
-## 自我修改的正确姿势
-
-```bash
-dsh-binary journal open --desc "安装 xx 插件" --scope profiles/web/cordis.patch.yml,profiles/web/package.json --restart-required
-# ...修改...
-dsh-binary journal commit J-000001
-# 需重启生效时写 control/restart-request.json → 监督者受控重启+探针验证+失败自动回滚
-```
+| 命令 | 说明 |
+|---|---|
+| `node src/cli.js start` | 启动监督者（拉起主星并监视；卫星在 P2 接入） |
+| `node src/cli.js status` | 双星状态一览 |
+| `node src/cli.js stop` | 停掉监督者拉起的双星进程树 |
+| `node src/cli.js snapshot <tag>` | 打快照（baseline/pre/daily/manual） |
+| `node src/cli.js repair --now` | 手动触发修复阶梯 |
+| `node src/cli.js halt` | 暂停自动修复 |
+| `node src/cli.js journal <open\|commit\|rollback\|list>` | 变更账本 |
+| `node src/cli.js takeover --now\|--undo` | 人工授权顶班 / 请求交回 |
 
 ## 文档
 
-- `docs/architecture.md` —— 角色、机制、状态机详解
-- `docs/deploy.md` —— 部署与验收步骤
-- `docs/runbook.md` —— 故障速查与人工最后防线
-- `docs/drills.md` —— 沙箱演练说明（含环境配置）
-
-## 许可证
-
-MIT（见 LICENSE）。依赖 dsh 的版权见 NOTICE.md。
-
-## 致谢与说明
-
-- 本项目的核心思想来自"副本 + 账本 + 分级修复"：修复永远优先精准回滚（账本定位），副本/快照是兜底。
-- 演练脚本为环境特定自足工具，运行前需按环境修改顶部常量（见 docs/drills.md）。
+- [docs/architecture.md](docs/architecture.md) — 架构设计
+- [docs/deploy.md](docs/deploy.md) — 部署与验收
+- [docs/runbook.md](docs/runbook.md) — 故障排查
+- [docs/drills.md](docs/drills.md) — 演练清单

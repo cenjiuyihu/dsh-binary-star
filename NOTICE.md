@@ -5,7 +5,7 @@
 - **@deepseek-ai/dsh**（DeepSeek Harness）
   - 本项目是 dsh 的"周边自愈系统"，深度依赖其机制：profile 组合（`$DSH_HOME/profiles/*`）、`bin.js` 启动器（`--profile`/`--port`/`--patch`/`--dump-config`）、Cordis 插件体系、会话存储格式。
   - 版权归其原作者所有。请遵循 dsh 自身许可证的条款（npm 包内 LICENSE 为准）。
-  - 本项目适配版本：`0.1.0-rc.7`（接口可能随版本变化，使用时请核对）。
+  - 本项目适配版本：`0.1.0-rc.8`（已验证 0.1.0-rc.7 → rc.8 升级；接口可能随版本变化，使用时请核对）。
 
 - **Node.js**（>= 20，含 `node:zlib` 的 zstd 支持）
 
