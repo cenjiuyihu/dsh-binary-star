@@ -1,15 +1,30 @@
 "use strict";
 /**
  * P3 探索 2：createZstdDecompress 流式解压拼接帧（只读）。
+ * 自动定位 dsh 会话根下最近有内容的工作区目录，无需硬编码路径。
  */
 const fs = require("node:fs");
 const path = require("node:path");
+const os = require("node:os");
 const { createZstdDecompress } = require("node:zlib");
 
-const SESSIONS = "C:/Users/cxm20/.dsh/sessions/--D-DSH--";
-const target = process.argv[2] || fs.readdirSync(SESSIONS).sort((a, b) =>
-  fs.statSync(path.join(SESSIONS, b)).mtimeMs - fs.statSync(path.join(SESSIONS, a)).mtimeMs)[0];
-const file = path.join(SESSIONS, target, "session.jsonl.zstd");
+const SESSIONS_ROOT = process.env.DSH_SESSIONS || path.join(os.homedir(), ".dsh", "sessions");
+
+function latestWorkspaceDir() {
+  if (!fs.existsSync(SESSIONS_ROOT)) return null;
+  const dirs = fs.readdirSync(SESSIONS_ROOT)
+    .map((n) => path.join(SESSIONS_ROOT, n))
+    .filter((p) => fs.statSync(p).isDirectory());
+  if (!dirs.length) return null;
+  dirs.sort((a, b) => fs.statSync(b).mtimeMs - fs.statSync(a).mtimeMs);
+  return dirs[0];
+}
+
+const workspace = latestWorkspaceDir();
+if (!workspace) { console.error("找不到会话目录（DSH_SESSIONS 可覆盖）"); process.exit(1); }
+const target = process.argv[2] || fs.readdirSync(workspace).sort((a, b) =>
+  fs.statSync(path.join(workspace, b)).mtimeMs - fs.statSync(path.join(workspace, a)).mtimeMs)[0];
+const file = path.join(workspace, target, "session.jsonl.zstd");
 const buf = fs.readFileSync(file);
 
 const dec = createZstdDecompress();

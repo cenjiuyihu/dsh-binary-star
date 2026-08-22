@@ -2,18 +2,26 @@
 /**
  * 交接演练：模拟"桌面壳已拉起主星"→ 再启动监督者 → 应执行一次性接管
  * （杀旧进程 → 拉起带 token 的新实例），不得出现端口冲突循环。
+ *
+ * 本脚本不含硬编码绝对路径：以下常量均在运行时推导（也可用环境变量覆盖）：
+ *   DSH_BIN / DSH_SBX_CONFIG / DSH_SBX_STATE / DSH_SBX_PATCH / DSH_SBX_WORKSPACE
  * 用法: node scripts/drill-handover.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const PROJECT = "D:/DSH/binary-star";
-const BIN = "C:/Users/cxm20/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js";
-const SANDBOX_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
-const STATE = "C:/Users/cxm20/.dsh/binary-star-sbx";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const BIN = process.env.DSH_BIN || path.join(HOME, "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const STATE = process.env.DSH_SBX_STATE || path.join(HOME, ".dsh", "binary-star-sbx").replace(/\\/g, "/");
 const STATE_FILE = `${STATE}/state.json`;
 const HB_FILE = `${STATE}/heartbeat/primary.json`;
-const SBX_PATCH = "C:/Users/cxm20/.dsh/profiles/sbx/cordis.patch.yml";
+const SBX_PATCH = process.env.DSH_SBX_PATCH || path.join(HOME, ".dsh", "profiles", "sbx", "cordis.patch.yml").replace(/\\/g, "/");
+const SBX_WORKSPACE = process.env.DSH_SBX_WORKSPACE || path.join(SBX_ROOT, "sbx-workspace").replace(/\\/g, "/");
 const CANONICAL_PATCH = "# 双星系统沙箱 profile 补丁层：只挂宿主心跳插件。\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -42,7 +50,7 @@ async function main() {
   // 1) 模拟桌面壳：直接拉起主星（无 token）
   console.log("\n[1] 模拟桌面壳拉起主星（无 token）");
   const foreign = spawn(process.execPath, [BIN, "--profile", "sbx"], {
-    cwd: "D:/DSH/.binary-star/sbx-workspace",
+    cwd: SBX_WORKSPACE,
     env: { ...process.env, DSH_BINARY_ROLE: "primary", DSH_BINARY_STATE: STATE, DSH_BINARY_HEARTBEAT_MS: "5000" },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
@@ -59,7 +67,7 @@ async function main() {
   // 2) 启动监督者
   console.log("\n[2] 启动监督者（应执行一次性接管）");
   const sup = spawn(process.execPath, ["src/cli.js", "start"], {
-    cwd: PROJECT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
+    cwd: ROOT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
   sup.stdout.on("data", (d) => process.stdout.write(`[supervisor] ${String(d).trim()}\n`));

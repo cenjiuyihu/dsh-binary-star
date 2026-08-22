@@ -2,9 +2,15 @@
 /**
  * 二分诊断：真实 Supervisor 类 + 顶层进程 spawn，监视 60s。
  * 记录：primaryProc.pid vs 心跳 pid、完整 stderr、退出码、cordis.yml 是否被改写。
+ * 本脚本不含硬编码绝对路径：路径均在运行时推导（可用 DSH_SBX_CONFIG / DSH_SBX_PATCH 覆盖）。
  * 用法: node scripts/diag-supervisor.js
  */
-process.env.DSH_BINARY_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
+const os = require("node:os");
+const path = require("node:path");
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+process.env.DSH_BINARY_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
 const fs = require("node:fs");
 const { loadConfig, statePaths, ensureStateDirs } = require("../src/paths");
 const hb = require("../src/heartbeat");
@@ -13,7 +19,7 @@ const { Supervisor } = require("../src/supervisor");
 const cfg = loadConfig();
 const p = ensureStateDirs(cfg);
 const sup = new Supervisor(cfg, p, { autoConfirm: true });
-const PATCH = "C:/Users/cxm20/.dsh/profiles/sbx/cordis.yml";
+const PATCH = process.env.DSH_SBX_PATCH || path.join(HOME, ".dsh", "profiles", "sbx", "cordis.yml");
 
 const before = fs.readFileSync(PATCH, "utf8");
 const t0 = Date.now();

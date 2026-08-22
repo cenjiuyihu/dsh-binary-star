@@ -2,20 +2,27 @@
 /**
  * 嵌套复现：像 drill-loop.js 一样 spawn `node src/cli.js start`，观察首轮主星是否死亡。
  * 用法: node scripts/diag-nested.js [--no-config-env]
+ * 本脚本不含硬编码绝对路径：路径均在运行时推导（可用 DSH_SBX_CONFIG / DSH_SBX_STATE 覆盖）。
  */
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const PROJECT = "D:/DSH/binary-star";
-const HB_FILE = "C:/Users/cxm20/.dsh/binary-star-sbx/heartbeat/primary.json";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const STATE = process.env.DSH_SBX_STATE || path.join(HOME, ".dsh", "binary-star-sbx").replace(/\\/g, "/");
+const HB_FILE = `${STATE}/heartbeat/primary.json`;
 const readJson = (f) => { try { return JSON.parse(fs.readFileSync(f, "utf8")); } catch { return null; } };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 async function main() {
   const noConfigEnv = process.argv.includes("--no-config-env");
   console.log(`[diag] spawn cli.js start (noConfigEnv=${noConfigEnv})`);
-  const env = noConfigEnv ? { ...process.env } : { ...process.env, DSH_BINARY_CONFIG: "D:/DSH/.binary-star/config.sandbox.json" };
-  const sup = spawn(process.execPath, ["src/cli.js", "start"], { cwd: PROJECT, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
+  const env = noConfigEnv ? { ...process.env } : { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG };
+  const sup = spawn(process.execPath, ["src/cli.js", "start"], { cwd: ROOT, env, stdio: ["ignore", "pipe", "pipe"], windowsHide: true });
   sup.stdout.on("data", (d) => process.stdout.write(`[cli:out] ${String(d).trimEnd()}\n`));
   sup.stderr.on("data", (d) => process.stdout.write(`[cli:err] ${String(d).trimEnd()}\n`));
 

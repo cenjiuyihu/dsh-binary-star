@@ -3,19 +3,26 @@
  * 受控关闭与孤儿检测演练：
  *  A) control/shutdown → 监督者停止主星并自行退出（不复活）
  *  B) DSH_BINARY_PARENT_PID 指向的父进程死亡 → 监督者自行清理退出
+ *
+ * 本脚本不含硬编码绝对路径：以下常量均在运行时推导（也可用环境变量覆盖）：
+ *   DSH_SBX_CONFIG / DSH_SBX_STATE / DSH_SBX_PATCH
  * 用法: node scripts/drill-shutdown.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const PROJECT = "D:/DSH/binary-star";
-const SANDBOX_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
-const STATE = "C:/Users/cxm20/.dsh/binary-star-sbx";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const STATE = process.env.DSH_SBX_STATE || path.join(HOME, ".dsh", "binary-star-sbx").replace(/\\/g, "/");
 const STATE_FILE = `${STATE}/state.json`;
 const HB_FILE = `${STATE}/heartbeat/primary.json`;
 const LOCK_FILE = `${STATE}/locks/supervisor.lock`;
 const CTRL = `${STATE}/control`;
-const SBX_PATCH = "C:/Users/cxm20/.dsh/profiles/sbx/cordis.patch.yml";
+const SBX_PATCH = process.env.DSH_SBX_PATCH || path.join(HOME, ".dsh", "profiles", "sbx", "cordis.patch.yml").replace(/\\/g, "/");
 const CANONICAL_PATCH = "# 双星系统沙箱 profile 补丁层：只挂宿主心跳插件。\n- insert:\n    - id: binary-star-host\n      name: dsh-binary-star-host\n";
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -44,7 +51,7 @@ async function main() {
   // ── A: 受控关闭 ────────────────────────────────────────
   console.log("\n=== A: control/shutdown 受控关闭 ===");
   const sup = spawn(process.execPath, ["src/cli.js", "start"], {
-    cwd: PROJECT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
+    cwd: ROOT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
   sup.stdout.on("data", (d) => process.stdout.write(`[supervisor] ${String(d).trim()}\n`));
@@ -88,7 +95,7 @@ async function main() {
   await sleep(1000);
   const parentPid = fakeParent.pid;
   const sup2 = spawn(process.execPath, ["src/cli.js", "start"], {
-    cwd: PROJECT,
+    cwd: ROOT,
     env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG, DSH_BINARY_PARENT_PID: String(parentPid) },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });

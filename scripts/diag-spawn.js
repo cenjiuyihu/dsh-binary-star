@@ -1,9 +1,15 @@
 "use strict";
 /**
  * 诊断：用监督者同款 spawn 参数拉起沙箱主星，轮询心跳 + 抓完整 stderr。
+ * 本脚本不含硬编码绝对路径：路径均在运行时推导（可用 DSH_SBX_CONFIG 覆盖）。
  * 用法: node scripts/diag-spawn.js
  */
-process.env.DSH_BINARY_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
+const os = require("node:os");
+const path = require("node:path");
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+process.env.DSH_BINARY_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
 const { spawn } = require("node:child_process");
 const fs = require("node:fs");
 const { loadConfig, statePaths, ensureStateDirs, primaryCommand } = require("../src/paths");

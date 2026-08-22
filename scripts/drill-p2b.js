@@ -7,20 +7,28 @@
  *     → 阶梯第 2 步回滚 open 账目 → 恢复 → 请求清除
  *
  * 安全边界：只改 profiles/sbx/cordis.patch.yml 与沙箱状态目录。
+ *
+ * 本脚本不含硬编码绝对路径：以下常量均在运行时推导（也可用环境变量覆盖）：
+ *   DSH_BIN / DSH_SBX_CONFIG / DSH_SBX_STATE / DSH_SBX_PATCH / DSH_SBX_WORKSPACE
  * 用法: node scripts/drill-p2b.js
  */
 const { spawn, spawnSync } = require("node:child_process");
 const fs = require("node:fs");
+const os = require("node:os");
+const path = require("node:path");
 
-const PROJECT = "D:/DSH/binary-star";
-const BIN = "C:/Users/cxm20/AppData/Roaming/npm/node_modules/@deepseek-ai/dsh/lib/bin.js";
-const SANDBOX_CONFIG = "D:/DSH/.binary-star/config.sandbox.json";
-const STATE = "C:/Users/cxm20/.dsh/binary-star-sbx";
+const HOME = os.homedir().replace(/\\/g, "/");
+const ROOT = path.resolve(__dirname, "..").replace(/\\/g, "/");
+const SBX_ROOT = process.env.DSH_SBX_ROOT || path.join(ROOT, "..", ".binary-star").replace(/\\/g, "/");
+const BIN = process.env.DSH_BIN || path.join(HOME, "AppData", "Roaming", "npm", "node_modules", "@deepseek-ai", "dsh", "lib", "bin.js").replace(/\\/g, "/");
+const SANDBOX_CONFIG = process.env.DSH_SBX_CONFIG || path.join(SBX_ROOT, "config.sandbox.json").replace(/\\/g, "/");
+const STATE = process.env.DSH_SBX_STATE || path.join(HOME, ".dsh", "binary-star-sbx").replace(/\\/g, "/");
 const STATE_FILE = `${STATE}/state.json`;
 const HB_FILE = `${STATE}/heartbeat/primary.json`;
 const CTRL_DIR = `${STATE}/control`;
 const REQ_FILE = `${CTRL_DIR}/restart-request.json`;
-const SBX_PATCH = "C:/Users/cxm20/.dsh/profiles/sbx/cordis.patch.yml";
+const SBX_PATCH = process.env.DSH_SBX_PATCH || path.join(HOME, ".dsh", "profiles", "sbx", "cordis.patch.yml").replace(/\\/g, "/");
+const SBX_WORKSPACE = process.env.DSH_SBX_WORKSPACE || path.join(SBX_ROOT, "sbx-workspace").replace(/\\/g, "/");
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 function killTree(pid) { if (pid) spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" }); }
@@ -33,7 +41,7 @@ function readJournal(f) {
 }
 function runCli(args) {
   const r = spawnSync(process.execPath, ["src/cli.js", ...args], {
-    cwd: PROJECT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
+    cwd: ROOT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     encoding: "utf8", timeout: 60000, stdio: ["pipe", "pipe", "pipe"],
   });
   return { code: r.status, out: String(r.stdout || "").trim(), err: String(r.stderr || "").trim() };
@@ -58,7 +66,7 @@ async function main() {
 
   // 预检：sbx 配置必须可解析（防止上轮演练残留的坏 patch 静默污染本场）
   const preflight = spawnSync(process.execPath, [BIN, "--profile", "sbx", "--dump-config"], {
-    cwd: "D:/DSH/.binary-star/sbx-workspace", encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"],
+    cwd: SBX_WORKSPACE, encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"],
   });
   if (preflight.status !== 0) {
     console.error("[drill] 预检失败: sbx 配置不可解析（dump-config 非零）。请先修复 profiles/sbx/cordis.patch.yml 再运行。");
@@ -83,7 +91,7 @@ async function main() {
 
   // ── 启动监督者 ────────────────────────────────────────
   const sup = spawn(process.execPath, ["src/cli.js", "start"], {
-    cwd: PROJECT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
+    cwd: ROOT, env: { ...process.env, DSH_BINARY_CONFIG: SANDBOX_CONFIG },
     stdio: ["ignore", "pipe", "pipe"], windowsHide: true,
   });
   sup.stdout.on("data", (d) => process.stdout.write(`[supervisor] ${String(d).trim()}\n`));
@@ -126,7 +134,7 @@ async function main() {
   fs.writeFileSync(SBX_PATCH, original + "\n- insert: [\n    - id: broken\n");
   // 确认破坏真实有效：dump-config 必须失败
   const badDump = spawnSync(process.execPath, [BIN, "--profile", "sbx", "--dump-config"], {
-    cwd: "D:/DSH/.binary-star/sbx-workspace", encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"],
+    cwd: SBX_WORKSPACE, encoding: "utf8", timeout: 30000, stdio: ["ignore", "pipe", "pipe"],
   });
   check("坏 patch 已写入且 dump-config 失败", badDump.status !== 0, `status=${badDump.status}`);
   fs.writeFileSync(REQ_FILE, JSON.stringify({ journalEntryId: jid2, desc: "p2b: 故意改坏后请求重启验证", ts: new Date().toISOString() }));
