@@ -100,7 +100,7 @@ async function main() {
   check("故障真实有效（dump-config 失败）", badDump.status !== 0, `status=${badDump.status}`);
 
   // ── 等阶梯用尽 → 等待授权 ─────────────────────────────
-  console.log("\n=== 等待阶梯用尽 → 顶班等待 ==");
+  console.log("\n=== 等待阶梯用尽 → 顶班等待 ===");
   let stWait = null;
   for (let i = 0; i < 60; i++) {
     await sleep(5000);
