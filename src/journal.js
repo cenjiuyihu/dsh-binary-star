@@ -3,8 +3,16 @@
  * 双星系统：变更账本（journal.jsonl，每行一条）。
  * 账目是修复的第一依据：崩溃 = 留下一笔 open 账目 = 头号嫌疑。
  *
- * 条目 schema：
- * { id, ts, actor, desc, scope, backup, recipe, status, verify, restartRequired }
+ * 条目 schema（企划 §5 / 附录 B）：
+ * {
+ *   id, ts, actor, desc,
+ *   scope: [相对 DSH_HOME 的路径...],
+ *   backup: "snapshots/pre-J-xxxxxx",   // 修改前的备份目录
+ *   recipe: { type: "restore-files|uninstall-pkg|restore-version|pnpm-install|ui-patch", detail },
+ *   status: "open | committed | reverted",
+ *   verify: "验证命令/描述",
+ *   restartRequired: true|false         // 受控自重启验证（P1 起支持）
+ * }
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -74,7 +82,7 @@ function commitEntry(journalFile, id) {
   fs.writeFileSync(journalFile, out.join("\n") + "\n");
 }
 
-/** 标记回滚（修复阶梯使用） */
+/** 标记回滚（修复阶梯使用）；如果提供了 backup 且存在，可顺带恢复文件 */
 function markReverted(journalFile, id, detail) {
   const lines = fs.readFileSync(journalFile, "utf8").split("\n").filter(Boolean);
   const out = [];
@@ -93,7 +101,7 @@ function markReverted(journalFile, id, detail) {
   fs.writeFileSync(journalFile, out.join("\n") + "\n");
 }
 
-/** 为账目补充 backup 字段 */
+/** 为账目补充 backup 字段（open 后由 CLI 写入自动备份目录名） */
 function setBackup(journalFile, id, backup) {
   const lines = fs.readFileSync(journalFile, "utf8").split("\n").filter(Boolean);
   const out = [];

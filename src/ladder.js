@@ -9,8 +9,10 @@
  *   2 回滚账本 open 条目 → 重启 → 验证   （改到一半崩溃）
  *   3 回滚最近 N 条 committed → 重启 → 验证
  *   4 快照还原（破坏性，需确认）
- *   5 重装 last-known-good dsh 版本（破坏性，需确认）
+ *   5 重装 last-known-good dsh 版本 + 重跑 ui-patch（破坏性，需确认）
  *   6 顶班（卫星接管，需确认/超时自动）
+ *
+ * P1 实现 0/2/3 的核心逻辑；1 的配置校验与 4/5/6 的完整执行在 P2 与卫星协同完成。
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -27,6 +29,7 @@ function cfgYamlExists(cfg, rel) {
  * 第 1 步：配置校验。
  *  1) 轻量结构检查（文件存在 + patch 的 insert 块带 id）；
  *  2) 真实冒烟：`node bin.js --profile <name> --dump-config` —— 组合树完整解析失败会非 0 退出。
+ *     （dump-config 不启动服务，安全；对语法/结构/包解析类故障是决定性判据。）
  */
 function validateConfig(cfg) {
   const issues = [];
@@ -81,12 +84,14 @@ function restoreEntryFiles(cfg, paths_, entry) {
 }
 
 /**
- * 执行阶梯。
- * ctx: { cfg, paths_, stateFile, restart, verify, log, needsConfirm, trigger }
+ * 执行阶梯（P1 版：0/1/2/3 核心 + 4/5/6 确认门与占位）。
+ * ctx: { cfg, paths_, stateFile, restart, verify, log, needsConfirm }
+ * restart: 由监督者注入的"重启主星并等待探针"函数
  */
 async function runLadder(ctx) {
   const { cfg, log } = ctx;
   const autoMax = cfg.ladder.autoRepairMaxStep; // 默认 3
+  // 修复报告：每次阶梯执行写 logs/repair/<ts>.json（结构化历史）
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
   const report = {
     ts: new Date().toISOString(),
@@ -106,6 +111,7 @@ async function runLadder(ctx) {
   log("ladder", "=== 修复阶梯开始 ===");
 
   const steps = [
+    // 第 0 步的"重启"由统一验证阶段执行（每个动作成功后都会 restart + verify）
     { no: 0, name: "强杀重启", run: () => ({ ok: true, detail: "重启在验证阶段执行" }) },
     {
       no: 1, name: "校验配置",
@@ -159,10 +165,11 @@ async function runLadder(ctx) {
     {
       no: 5, name: "重装 dsh 版本",
       run: () => {
-        return { ok: false, detail: "需人工执行：npm install -g @deepseek-ai/dsh@<lkg> + 按需重跑部署方 UI 补丁" };
+        // 需要 last-known-good 版本号（账本/快照 meta 记录）；P2 完善
+        return { ok: false, detail: "P2 实现：npm.cmd install -g @deepseek-ai/dsh@<lkg> + 重跑 ui-patch" };
       },
     },
-    { no: 6, name: "顶班", run: () => ({ ok: false, detail: "由监督者顶班流程执行（卫星副本接管）" }) },
+    { no: 6, name: "顶班", run: () => ({ ok: false, detail: "P2 实现：卫星接管 :3080" }) },
   ];
 
   for (const step of steps) {
@@ -180,6 +187,7 @@ async function runLadder(ctx) {
     log("ladder", `   结果: ${r.ok ? "OK" : "FAIL"} - ${r.detail}`);
     const stepRecord = { no: step.no, name: step.name, actionOk: !!r.ok, detail: r.detail || null };
     if (step.no >= 0 && r.ok) {
+      // 动作成功后：重启 + 探针验证（每步"动作 → 重启 → 验证"）
       await ctx.restart();
       await sleep(ctx.verifyWaitMs ?? 30000);
       const v = await ctx.verify();

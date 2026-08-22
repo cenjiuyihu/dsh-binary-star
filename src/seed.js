@@ -1,8 +1,10 @@
 "use strict";
 /**
- * 双星系统：会话种子提取器（代班续接对话的基础）。
+ * 双星系统：会话种子提取器（C 层代班的基础）。
  * 读取主星最近会话的 session.jsonl.zstd（多帧 zstd 拼接），解压后提取最近 N 条
- * 用户/助手消息文本，写成 seed/latest.txt + meta.json。只读主星会话存储。
+ * 用户/助手消息文本，写成 seed/latest.txt + meta.json，供代班智能体续接对话。
+ *
+ * 只读主星会话存储，绝不修改。
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -17,7 +19,7 @@ function splitZstdFrames(buf) {
   let offset = 0;
   while (offset < buf.length) {
     const start = offset;
-    if (buf.length - offset < 4) break;
+    if (buf.length - offset < 4) break; // 撕裂尾部
     if (buf.readUInt32LE(offset) !== 0xfd2fb528) {
       throw new Error(`zstd 帧切分: ${offset} 处 magic 非法`);
     }
@@ -36,7 +38,7 @@ function splitZstdFrames(buf) {
     if (buf.length - offset < remainingHeaderBytes) break;
     offset += remainingHeaderBytes;
     for (;;) {
-      if (buf.length - offset < 3) return frames;
+      if (buf.length - offset < 3) return frames; // 撕裂
       const blockHeader = buf.readUIntLE(offset, 3);
       offset += 3;
       const lastBlock = (blockHeader & 1) !== 0;
@@ -83,7 +85,10 @@ function latestSessionDir(sessionsRoot) {
   return pool[0];
 }
 
-/** 提取最近 N 条对话消息（识别 user/message 与 assistant/message 记录） */
+/**
+ * 提取最近 N 条对话消息（识别 user/message 与 assistant/message 记录；
+ * 跳过流式 chunk/tool 等中间产物）。
+ */
 function extractMessages(lines, n) {
   const out = [];
   for (const o of lines) {
@@ -104,7 +109,12 @@ function extractMessages(lines, n) {
   return out.slice(-n);
 }
 
-/** 提取种子并写文件 */
+/**
+ * 提取种子并写文件。
+ * @param sessionsRoot 主星工作区会话根（如 <DSH_HOME>/sessions/--D-DSH--）
+ * @param stateDir     双星状态目录（seed/ 写到这里）
+ * @param n            最近 N 条消息
+ */
 function writeSeed(sessionsRoot, stateDir, n = 40) {
   const dir = latestSessionDir(sessionsRoot);
   if (!dir) return { ok: false, reason: "无会话目录" };

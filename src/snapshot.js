@@ -61,7 +61,7 @@ function snapshotScope(cfg, paths_, tag) {
   return { dir, meta };
 }
 
-/** 列出快照（按时间倒序；只认带 meta.json 的真实快照） */
+/** 列出快照（按时间倒序；只认带 meta.json 的真实快照，账本备份目录 pre-* 自动忽略） */
 function listSnapshots(paths_) {
   if (!fs.existsSync(paths_.snapshots)) return [];
   return fs

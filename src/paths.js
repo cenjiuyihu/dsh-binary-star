@@ -1,12 +1,13 @@
 "use strict";
 /**
- * 双星系统：路径解析与状态目录初始化。
+ * 双星系统：路径解析与状态目录初始化（P1）。
  * 纯 Node 实现，零依赖。
  *
  * 可移植性：config 中的路径支持占位符（开源版默认配置使用）：
  *  - $HOME   → 用户主目录（os.homedir()）
  *  - $CWD    → 当前工作目录
  *  - $NPM_ROOT → npm 全局包根目录（npm root -g）
+ * 本机配置使用具体路径，不受影响。
  */
 const fs = require("node:fs");
 const path = require("node:path");
@@ -24,7 +25,7 @@ function expandPath(v) {
     .replace(/\$CWD/g, process.cwd().replace(/\\/g, "/"));
 }
 
-/** npm 全局根（$NPM_ROOT 解析用；.cmd 需经 cmd.exe 执行） */
+/** npm 全局根（$NPM_ROOT 解析用；.cmd 需经 cmd.exe 执行，ps1 被禁） */
 function npmRoot() {
   const comSpec = process.env.ComSpec || "cmd.exe";
   for (const bin of ["npm.cmd", "npm"]) {
@@ -45,6 +46,7 @@ function loadConfig() {
   const cfg = JSON.parse(fs.readFileSync(file, "utf8"));
   if (process.env.DSH_BINARY_STATE) cfg.stateDir = process.env.DSH_BINARY_STATE;
   if (process.env.DSH_BINARY_DSH_HOME) cfg.dshHome = process.env.DSH_BINARY_DSH_HOME;
+  // 占位符展开（仅路径类字段）
   for (const k of ["dshHome", "stateDir", "primaryWorkdir", "satelliteWorkdir", "dshPkg"]) {
     if (typeof cfg[k] === "string") cfg[k] = expandPath(cfg[k]);
   }
@@ -87,10 +89,10 @@ function ensureStateDirs(cfg) {
   return p;
 }
 
-/** dsh 主进程启动命令 */
+/** dsh 主进程启动命令（来自 P0 审计：node <pkg>/lib/bin.js --profile <profile>） */
 function primaryCommand(cfg) {
   return {
-    cmd: process.execPath,
+    cmd: process.execPath, // node
     args: [path.join(cfg.dshPkg, "lib", "bin.js"), "--profile", cfg.primaryProfile],
     cwd: cfg.primaryWorkdir,
     env: {
@@ -102,7 +104,7 @@ function primaryCommand(cfg) {
   };
 }
 
-/** 卫星启动命令（web bundles 后必须显式指定端口） */
+/** 卫星启动命令（web bundles 后必须显式指定端口，避免与主星 :3080 冲突） */
 function satelliteCommand(cfg) {
   return {
     cmd: process.execPath,

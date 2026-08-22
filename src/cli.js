@@ -69,12 +69,14 @@ async function main() {
       break;
     }
     case "stop": {
+      // 受控关闭：写 control/shutdown，运行中的监督者自行清理退出（杀主星→释放锁→退出）
       const shutdownFile = path.join(p.control, "shutdown");
       const lock = readLock(p);
       if (lock && lock.pid && hb.isPidAlive(lock.pid)) {
         fs.writeFileSync(shutdownFile, JSON.stringify({ ts: new Date().toISOString(), by: "cli" }));
         console.log("已请求监督者受控关闭（control/shutdown）；监督者将停止主星并退出");
       } else {
+        // 监督者未在运行：直接杀主星/卫星进程树兜底
         const ph = hb.readHeartbeat(p.heartbeat, "primary");
         if (ph && ph.pid && hb.isPidAlive(ph.pid)) killTree(ph.pid);
         const sh = hb.readHeartbeat(p.heartbeat, "satellite");
@@ -108,12 +110,14 @@ async function main() {
     }
     case "takeover": {
       if (arg === "--now") {
+        // 人工授权顶班：写授权文件，运行中的监督者在下一 tick 执行
         const authFile = path.join(p.control, "authorize-takeover.json");
         fs.writeFileSync(authFile, JSON.stringify({ ts: new Date().toISOString(), by: "cli" }));
         console.log("已写入顶班授权（control/authorize-takeover.json），监督者将在下一 tick 执行代班接管");
         break;
       }
       if (arg === "--undo") {
+        // 请求交回：写请求文件，监督者执行（停代班 → 归档会话 → 重启主星）
         const hbFile = path.join(p.control, "handback-request.json");
         fs.writeFileSync(hbFile, JSON.stringify({ ts: new Date().toISOString(), by: "cli" }));
         console.log("已写入交回请求（control/handback-request.json），监督者将在下一 tick 执行");
@@ -131,6 +135,7 @@ async function main() {
       const sub = arg;
       const rest = process.argv.slice(4);
       if (sub === "open") {
+        // dsh-binary journal open --desc "..." --scope a.yml,b.yml [--restart-required]
         const desc = rest.includes("--desc") ? rest[rest.indexOf("--desc") + 1] : "未描述";
         let scope = [];
         if (rest.includes("--scope")) {
@@ -138,6 +143,7 @@ async function main() {
         }
         const restartRequired = rest.includes("--restart-required");
         const entry = journal.openEntry(p.journal, { actor: "agent", desc, scope, recipe: { type: "restore-files" }, restartRequired });
+        // 自动备份 scope 文件到 snapshots/pre-<id>/
         const backupDir = path.join(p.snapshots, `pre-${entry.id}`);
         fs.mkdirSync(backupDir, { recursive: true });
         for (const rel of scope) {

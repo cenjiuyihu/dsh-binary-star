@@ -2,13 +2,16 @@
 /**
  * 双星系统：监督者（三层架构的最外层，永不依赖 LLM）。
  * 职责：
- *  1. 拉起主星（与桌面壳同款命令）
- *  2. 心跳监视 + 故障分类（D1 启动失败 / D2 功能性故障 / D3 挂死）
+ *  1. 拉起主星（与桌面壳同款命令：node <pkg>/lib/bin.js <profile>）
+ *  2. 心跳监视 + 故障分类（D1 启动失败 / D2 功能性故障 / D3 挂死 / D4 降级）
  *  3. 快速路径：重启 + 探针验证（成功判据 = 探针通过，不只是进程活）
- *  4. 慢速路径：修复阶梯；阶梯用尽 → 顶班等待 → 代班接管 → 交回归档
- *  5. 受控关闭（control/shutdown）与孤儿检测（DSH_BINARY_PARENT_PID）
+ *  4. 慢速路径：向卫星发接管信号 + 就地执行修复阶梯（P2 起由卫星协同）
+ *  5. 自身被杀的兜底：由外层 .cmd 循环重启（见 README）
+ *
+ * 注意：本文件在主星/卫星进程内不加载；只由监督者 CLI 进程使用。
  */
-const { spawn, spawnSync } = require("node:child_process");
+const { spawn } = require("node:child_process");
+const { spawnSync } = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
@@ -34,14 +37,15 @@ class Supervisor {
   constructor(cfg, paths_, opts = {}) {
     this.cfg = cfg;
     this.paths = paths_;
-    this.opts = opts;
+    this.opts = opts; // { primaryOnly: true } 用于 P1 单星调试
     this.primaryProc = null;
     this.running = false;
     this.restartCount = { hourStart: Date.now(), count: 0 };
     // 归属 token：每次监督者启动生成，注入子进程 env；心跳必须携带它才算可信
     this.token = randomUUID();
     this.cfg.token = this.token;
-    // 启动宽限只适用于"本监督者启动后从未健康起来过"的实例
+    // 启动宽限只适用于"本监督者启动后从未健康起来过"的实例；
+    // 因此这两个标志只在构造器初始化，绝不在每次 spawn 时重置
     this.bootedAt = Date.now();
     this.sawHealthyHeartbeat = false;
     this.bootExits = 0; // 宽限期内主星进程退出次数（启动即崩检测）
@@ -108,15 +112,17 @@ class Supervisor {
     return { ok: false };
   }
 
-  /** 慢速路径：就地跑阶梯；阶梯用尽 → 进入顶班等待 */
+  /** 慢速路径：就地跑阶梯（修复执行器在监督者侧）；阶梯用尽 → 进入顶班等待 */
   async slowPath(classification) {
     this._log(`慢速路径开始（${classification}）`);
+    // 1) 发接管信号（P3：代班编排由本监督者统一执行，信号留档）
     const signal = path.join(this.paths.control, "takeover-signal.json");
     require("node:fs").writeFileSync(signal, JSON.stringify({
       ts: new Date().toISOString(),
       classification,
       reason: "快速路径失败",
     }));
+    // 2) 就地跑阶梯
     let verifyPid = null;
     const result = await ladder.runLadder({
       cfg: this.cfg,
@@ -130,11 +136,15 @@ class Supervisor {
         return { ok: true };
       },
       verify: async () => probe.probePrimary(this.cfg, this.paths, this.paths.stateFile, verifyPid),
-      needsConfirm: (stepNo) => this.opts.autoConfirm ? true : false,
+      needsConfirm: (stepNo) => {
+        // P1：自动深度以内的步骤直接执行；以上的在无控制文件许可时跳过
+        return this.opts.autoConfirm ? true : false;
+      },
     });
     if (result.ok) {
       this._setState("primary", "HANDED-BACK", `慢速路径: ${result.detail}`);
     } else {
+      // 阶梯用尽 → 顶班等待（人工授权文件或超时自动）
       this.pendingTakeover = { since: Date.now(), classification };
       const autoAfterMs = (this.cfg.takeover && this.cfg.takeover.autoAfterMs) ?? 30 * 60 * 1000;
       this._setState("primary", "DOWN", `阶梯用尽，等待顶班授权（control/authorize-takeover.json 或 ${Math.round(autoAfterMs / 60000)} 分钟超时）`);
@@ -229,7 +239,7 @@ class Supervisor {
   /** 交回：杀代班 → 归档代班会话 → 重启主星 */
   async handback() {
     this._log("=== 交回开始 ===");
-    this.handingBack = true;
+    this.handingBack = true; // 抑制代班 exit 自愈（避免误触发重启）
     try {
       if (this.takeoverProc) {
         this._log("停止代班实例");
@@ -240,6 +250,7 @@ class Supervisor {
     } finally {
       this.handingBack = false;
     }
+    // 归档代班会话：把卫星工作区的会话目录拷入主星工作区会话根
     try {
       const srcRoot = path.join(this.cfg.dshHome, "sessions", encodeWorkspace(this.cfg.satelliteWorkdir));
       const dstRoot = path.join(this.cfg.dshHome, "sessions", encodeWorkspace(this.cfg.primaryWorkdir));
@@ -268,13 +279,21 @@ class Supervisor {
     this._log("主星已重启，等待探针确认（由 tick 完成）");
   }
 
-  /** 故障分类（D1/D2/D3/D4） */
+  /** 故障分类（D1/D2/D3/D4）——含诊断日志（P1b 调试用，后续收敛） */
   classify(heartbeat, probeResult) {
     const now = Date.now();
+    const cls = this._classify(heartbeat, probeResult, now);
+    this._log(`[classify] ${cls} sawHealthy=${this.sawHealthyHeartbeat} bootAge=${Math.round((now - this.bootedAt) / 1000)}s health=${probeResult.health} alive=${probeResult.alive} stale=${probeResult.stale} trusted=${probeResult.trusted}`);
+    return cls;
+  }
+
+  _classify(heartbeat, probeResult, now) {
     if (probeResult.health && probeResult.health !== "ok" && probeResult.health !== "unknown") {
-      return "D2";
+      return "D2"; // 功能性故障（事故 1：进程活、会话层坏）
     }
-    if (probeResult.alive) return "D3";
+    if (probeResult.alive) return "D3"; // 挂死：心跳停但进程在
+    // 启动宽限只适用于"从未健康起来过"的实例；曾经健康运行后被杀死，直接按 D1 处置。
+    // 宽限期内若进程已退出 ≥2 次（启动即崩/boot loop），提前结束宽限进入快速路径。
     if (
       !this.sawHealthyHeartbeat &&
       now - this.bootedAt < this.cfg.heartbeat.bootGraceMs &&
@@ -282,10 +301,16 @@ class Supervisor {
     ) {
       return "BOOT_GRACE";
     }
-    return "D1";
+    return "D1"; // 启动失败（无心跳、进程不在）
   }
 
-  /** 受控自重启验证：restart-request.json → 受控重启 → 探针验证 → 失败阶梯回滚（3 次上限） */
+  /**
+   * 受控自重启验证（企划 §14.4，事故 1 的根治件）：
+   * 主星 agent 修改需重启才生效的配置后，写 control/restart-request.json
+   * （含 journalEntryId）。监督者收到后：受控重启 → 探针验证；
+   * 通过 → 删除请求、账目保留 committed；失败 → 进入修复阶梯（回滚该账目）→ 恢复。
+   * 阶梯也失败 → 尝试计数，≥3 次后把请求改名 .failed 并停止自动重试（防无限循环）。
+   */
   async checkRestartRequest() {
     const reqFile = path.join(this.paths.control, "restart-request.json");
     if (!fs.existsSync(reqFile)) return false;
@@ -297,13 +322,14 @@ class Supervisor {
     }
     const attempts = Number(req.attempts || 0);
     if (attempts >= 3) {
-      this._log(`受控自重启请求 ${req.journalEntryId} 已尝试 3 次仍失败，标记 failed 停止自动重试`);
+      this._log(`受控自重启请求 ${req.journalEntryId} 已尝试 3 次仍失败，标记 failed 停止自动重试（需人工介入）`);
       fs.renameSync(reqFile, `${reqFile}.failed`);
       this._setState("primary", "DOWN", `受控自重启失败×3，待人工（${req.journalEntryId}）`);
       return true;
     }
     this._log(`受控自重启请求: 账目 ${req.journalEntryId} (${req.desc || "无描述"}) 第 ${attempts + 1} 次`);
     this._setState("primary", "VERIFYING", `受控自重启验证（${req.journalEntryId}）`);
+
     this.restartPrimary();
     const newProc = this.primaryProc;
     await sleep(this.cfg.fastPath.verifyWaitMs || 30000);
@@ -319,13 +345,14 @@ class Supervisor {
     if (result.ok) {
       fs.rmSync(reqFile, { force: true });
     } else {
+      // 阶梯也失败：记录尝试次数，留给下一次 tick 重试（上限 3）
       req.attempts = attempts + 1;
       fs.writeFileSync(reqFile, JSON.stringify(req));
     }
     return true;
   }
 
-  /** 受控关闭：control/shutdown 文件存在 → 杀主星 → 释放锁 → 退出 */
+  /** 受控关闭：control/shutdown 文件存在 → 杀主星 → 释放锁 → 退出（供壳/用户显式停止） */
   handleShutdownRequest() {
     const file = path.join(this.paths.control, "shutdown");
     if (!fs.existsSync(file)) return false;
@@ -340,7 +367,7 @@ class Supervisor {
     process.exit(0);
   }
 
-  /** 孤儿检测：父进程（桌面壳）已死 → 自行清理退出 */
+  /** 孤儿检测：父进程（桌面壳）已死 → 自行清理退出，防止后台残留 */
   handleOrphanCheck() {
     const parentPid = Number(process.env.DSH_BINARY_PARENT_PID || 0);
     if (!parentPid || parentPid <= 0) return false;
@@ -357,10 +384,12 @@ class Supervisor {
     return false;
   }
 
-  /** 监视循环（单次 tick） */
+  /** 监视循环（单次 tick；由 start 驱动） */
   async tick() {
+    // 受控关闭与孤儿检测优先（壳/用户显式停止、壳崩溃兜底）
     if (this.handleShutdownRequest()) return;
     if (this.handleOrphanCheck()) return;
+    // 交回请求优先处置（用户 `dsh-binary takeover --undo` 写入）
     const handbackFile = path.join(this.paths.control, "handback-request.json");
     if (fs.existsSync(handbackFile)) {
       fs.rmSync(handbackFile, { force: true });
@@ -371,6 +400,7 @@ class Supervisor {
         this._log(`handback 异常: ${e.message}`);
       }
     }
+    // 顶班等待的授权检查（人工授权文件或超时）
     if (this.pendingTakeover) {
       const t = this.cfg.takeover || {};
       const authFile = path.join(this.paths.control, "authorize-takeover.json");
@@ -380,6 +410,7 @@ class Supervisor {
       const cls = this.pendingTakeover.classification;
       if (authorized && !fs.existsSync(haltFile)) {
         this._log(`顶班授权确认（${fs.existsSync(authFile) ? "人工授权" : "超时自动"}），执行代班接管`);
+        // 消费授权（无论成败只授权一次；失败后需重新授权，防无限接管循环）
         fs.rmSync(authFile, { force: true });
         this.pendingTakeover = null;
         try {
@@ -393,6 +424,7 @@ class Supervisor {
         this.pendingTakeover = null;
         return;
       } else {
+        // 未授权：若主星已自行恢复则取消等待；否则跳过故障处置（避免重复阶梯循环）
         const pr = await probe.probePrimary(this.cfg, this.paths, this.paths.stateFile);
         if (pr.ok) {
           this._log("主星已恢复，取消顶班等待");
@@ -400,9 +432,10 @@ class Supervisor {
           this._setState("primary", "RUNNING", "等待期间恢复");
           return;
         }
-        return;
+        return; // 继续等授权
       }
     }
+    // 受控自重启请求优先处置（agent 的自我修改协议入口）
     try {
       if (await this.checkRestartRequest()) return;
     } catch (e) {
@@ -411,6 +444,7 @@ class Supervisor {
     const h = hb.readHeartbeat(this.paths.heartbeat, "primary");
     const pr = await probe.probePrimary(this.cfg, this.paths, this.paths.stateFile);
     if (h && !hb.isStale(h, this.cfg.heartbeat) && pr.ok) {
+      // 健康
       this.sawHealthyHeartbeat = true;
       if (this._readState().primary.state !== "RUNNING") {
         this._setState("primary", "RUNNING", "心跳与探针正常");
@@ -418,7 +452,7 @@ class Supervisor {
       return;
     }
     if (h && hb.isStale(h, this.cfg.heartbeat) === false && pr.health === "ok" && !pr.httpOk) {
-      this._log("GUI HTTP 不可达但心跳正常（D4 候选，暂不处置）");
+      this._log("GUI HTTP 不可达但心跳正常（D4 候选，暂不处置，等待宿主自检上报）");
       return;
     }
     const cls = this.classify(h, pr);
@@ -428,22 +462,25 @@ class Supervisor {
     }
     this._log(`检测到故障: ${cls} (hb=${hb.summarize(h)} alive=${pr.alive} http=${pr.httpOk} trusted=${pr.trusted})`);
     this._setState("primary", cls === "D2" ? "DEGRADED" : "DOWN", cls);
+
+    // 速率限制：1 小时内重启上限
     const now = Date.now();
     if (now - this.restartCount.hourStart > 3600_000) {
       this.restartCount = { hourStart: now, count: 0 };
     }
     if (this.restartCount.count >= (this.cfg.fastPath.restartAttempts + 1) * 3) {
-      this._log("速率限制触发：跳过本轮自动处置，等待人工");
+      this._log("速率限制触发：跳过本轮自动处置，等待人工（control/halt 或人工命令）");
       return;
     }
     this.restartCount.count++;
+
     const fast = await this.fastPath(cls);
     if (!fast.ok) {
       await this.slowPath(cls);
     }
   }
 
-  /** 单实例锁：防止双监督者互相抢着重启 */
+  /** 单实例锁：防止双监督者互相抢着重启（locks/supervisor.lock） */
   acquireLock() {
     const lockFile = path.join(this.paths.locks, "supervisor.lock");
     try {
@@ -465,26 +502,6 @@ class Supervisor {
     } catch {}
   }
 
-  /** 启动前的所有权接管：已有主星在运行（桌面壳拉起）→ 一次性交接 */
-  async ensurePrimaryOwnership() {
-    const h = hb.readHeartbeat(this.paths.heartbeat, "primary");
-    const fresh = h && !hb.isStale(h, this.cfg.heartbeat) && hb.isPidAlive(h.pid);
-    if (fresh) {
-      this._log(`发现已运行的主星 pid=${h.pid}（非本监督者管理），执行一次性接管交接`);
-      killTree(h.pid);
-      await sleep(5000);
-      return;
-    }
-    const port = this.cfg.primaryPort || 3080;
-    if (this.cfg.probe && this.cfg.probe.httpCheck === false) return;
-    const portPid = this.findPidByPort(port);
-    if (portPid && portPid !== process.pid) {
-      this._log(`发现 :${port} 被 pid=${portPid} 占用（无心跳），执行接管交接`);
-      killTree(portPid);
-      await sleep(5000);
-    }
-  }
-
   /** 通过端口找监听进程 pid（Windows） */
   findPidByPort(port) {
     const r = spawnSync("powershell", [
@@ -493,6 +510,32 @@ class Supervisor {
     ], { encoding: "utf8", timeout: 15000, stdio: ["pipe", "pipe", "pipe"] });
     const pid = Number(String(r.stdout || "").trim());
     return pid > 0 ? pid : null;
+  }
+
+  /**
+   * 启动前的所有权接管：如果已有主星在运行（桌面壳拉起、或残留实例），
+   * 执行一次性交接：杀旧进程 → 等端口释放 → 由本监督者重新拉起（带归属 token）。
+   * 这是"从桌面壳管理切换到监督者管理"的唯一一次重启窗口（秒级）。
+   */
+  async ensurePrimaryOwnership() {
+    // 1) 心跳存在且新鲜 → 有主星在跑（非本监督者管理）
+    const h = hb.readHeartbeat(this.paths.heartbeat, "primary");
+    const fresh = h && !hb.isStale(h, this.cfg.heartbeat) && hb.isPidAlive(h.pid);
+    if (fresh) {
+      this._log(`发现已运行的主星 pid=${h.pid}（非本监督者管理），执行一次性接管交接（秒级重启）`);
+      killTree(h.pid);
+      await sleep(5000);
+      return;
+    }
+    // 2) 无新鲜心跳但端口被占（心跳插件异常等边缘情况）→ 按端口找 pid 接管
+    const port = this.cfg.primaryPort || 3080;
+    if (this.cfg.probe && this.cfg.probe.httpCheck === false) return; // 无 web 服务 profile 跳过
+    const portPid = this.findPidByPort(port);
+    if (portPid && portPid !== process.pid) {
+      this._log(`发现 :${port} 被 pid=${portPid} 占用（无心跳），执行接管交接`);
+      killTree(portPid);
+      await sleep(5000);
+    }
   }
 
   /** 启动监督者（阻塞式监视循环） */
