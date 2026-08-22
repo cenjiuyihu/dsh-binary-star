@@ -1,0 +1,19 @@
+{
+  "name": "dsh-binary-star",
+  "version": "0.1.0",
+  "description": "Binary-star self-healing system for DeepSeek Harness (DSH): heartbeat watchdog, repair ladder, controlled-restart verification, and failover takeover via a satellite replica profile.",
+  "private": false,
+  "license": "MIT",
+  "main": "src/cli.js",
+  "bin": {
+    "dsh-binary": "src/cli.js"
+  },
+  "scripts": {
+    "start": "node src/cli.js start",
+    "status": "node src/cli.js status",
+    "snapshot": "node src/cli.js snapshot manual"
+  },
+  "engines": {
+    "node": ">=20"
+  }
+}

@@ -1,0 +1,64 @@
+{
+  "dshHome": "$HOME/.dsh",
+  "dshPkg": "$NPM_ROOT",
+  "stateDir": "$HOME/.dsh/binary-star",
+
+  "primaryProfile": "web",
+  "primaryWorkdir": "$CWD",
+  "primaryPort": 3080,
+
+  "satelliteProfile": "satellite",
+  "satelliteWorkdir": "$HOME/.dsh/sat-workspace",
+  "satellitePort": 3081,
+
+  "heartbeat": {
+    "intervalMs": 5000,
+    "watchIntervalMs": 10000,
+    "missThreshold": 3,
+    "bootGraceMs": 90000
+  },
+
+  "fastPath": {
+    "restartAttempts": 2,
+    "probeTimeoutMs": 3000,
+    "verifyWaitMs": 30000
+  },
+
+  "ladder": {
+    "autoRepairMaxStep": 3,
+    "hourlyRestoreLimit": 2,
+    "perRepairRestartLimit": 3
+  },
+
+  "journal": {
+    "maxRollbackEntries": 10
+  },
+
+  "snapshot": {
+    "dailyKeep": 7,
+    "scope": [
+      "profiles/web/cordis.yml",
+      "profiles/web/cordis.patch.yml",
+      "profiles/web/package.json",
+      "profiles/web/pnpm-lock.yaml",
+      "profiles/web/pnpm-workspace.yaml",
+      "profiles/plugins",
+      "settings.yaml"
+    ],
+    "exclude": ["node_modules", "dist", ".git"]
+  },
+
+  "uiPatch": {
+    "script": "",
+    "backup": "",
+    "note": "ui-patch 是部署方的本地 GUI 定制（不属于本项目的分发内容）；如有请在此配置"
+  },
+
+  "takeover": {
+    "port": 3080,
+    "profile": "satellite",
+    "autoAfterMs": 1800000,
+    "seedLastN": 40,
+    "sessionsRoot": "$HOME/.dsh/sessions"
+  }
+}
