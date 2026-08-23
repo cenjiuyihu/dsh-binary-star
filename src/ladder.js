@@ -165,8 +165,24 @@ async function runLadder(ctx) {
     {
       no: 5, name: "重装 dsh 版本",
       run: () => {
-        // 需要 last-known-good 版本号（账本/快照 meta 记录）；P2 完善
-        return { ok: false, detail: "P2 实现：npm.cmd install -g @deepseek-ai/dsh@<lkg> + 重跑 ui-patch" };
+        // 从最近快照的 meta.dshVersion 恢复 last-known-good 版本 + 重跑 ui-patch
+        const snaps = snapshot.listSnapshots(ctx.paths_);
+        if (snaps.length === 0) return { ok: false, detail: "无快照可提供 last-known-good 版本" };
+        const lkg = snaps[0].meta && snaps[0].meta.dshVersion;
+        if (!lkg || lkg === "unknown") return { ok: false, detail: "快照未记录 dshVersion" };
+        const comSpec = process.env.ComSpec || "cmd.exe";
+        const r = spawnSync(comSpec, ["/c", `npm.cmd install -g @deepseek-ai/dsh@${lkg} --loglevel=warn`], {
+          encoding: "utf8", windowsHide: true, timeout: 360000, stdio: ["pipe", "pipe", "pipe"],
+        });
+        if (r.status !== 0) return { ok: false, detail: `npm install -g @deepseek-ai/dsh@${lkg} 失败: ${String(r.stderr || "").trim().slice(0, 200)}` };
+        // 重跑 ui-patch（若部署方配置了定制脚本）
+        if (cfg.uiPatch && cfg.uiPatch.script && fs.existsSync(cfg.uiPatch.script)) {
+          const p = spawnSync(process.execPath, [cfg.uiPatch.script], { encoding: "utf8", timeout: 60000, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+          if (p.status !== 0) {
+            return { ok: false, detail: `dsh@${lkg} 已安装，但 ui-patch 重跑失败（anchor 失配？）: ${String(p.stderr || "").trim().slice(0, 200)}` };
+          }
+        }
+        return { ok: true, detail: `已重装 dsh@${lkg}（来自快照 ${snaps[0].name}）` };
       },
     },
     { no: 6, name: "顶班", run: () => ({ ok: false, detail: "P2 实现：卫星接管 :3080" }) },

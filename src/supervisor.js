@@ -460,8 +460,22 @@ class Supervisor {
       this._log(`启动宽限期内（${this.cfg.heartbeat.bootGraceMs}ms），等待首个健康心跳`);
       return;
     }
-    this._log(`检测到故障: ${cls} (hb=${hb.summarize(h)} alive=${pr.alive} http=${pr.httpOk} trusted=${pr.trusted})`);
-    this._setState("primary", cls === "D2" ? "DEGRADED" : "DOWN", cls);
+    // 二次确认（防瞬时抖动误判：磁盘 I/O 尖峰、GC 停顿等导致的单次探针失败）：
+    // 等一个 tick 再探一次，若已恢复则跳过处置
+    this._log(`检测到异常（${cls}），10s 后二次确认`);
+    await sleep(10000);
+    const h2 = hb.readHeartbeat(this.paths.heartbeat, "primary");
+    const pr2 = await probe.probePrimary(this.cfg, this.paths, this.paths.stateFile);
+    if (pr2.ok) {
+      this.sawHealthyHeartbeat = true;
+      this._setState("primary", "RUNNING", "二次确认时已恢复（瞬时抖动，未处置）");
+      this._log("二次确认时主星已恢复，跳过处置");
+      return;
+    }
+    const cls2 = this.classify(h2, pr2);
+    const clsFinal = cls2 === "BOOT_GRACE" ? cls : cls2;
+    this._log(`二次确认仍异常: ${clsFinal} (hb=${hb.summarize(h2)} alive=${pr2.alive} http=${pr2.httpOk} trusted=${pr2.trusted} envOk=${pr2.envOk})`);
+    this._setState("primary", clsFinal === "D2" ? "DEGRADED" : "DOWN", clsFinal);
 
     // 速率限制：1 小时内重启上限
     const now = Date.now();
@@ -474,9 +488,9 @@ class Supervisor {
     }
     this.restartCount.count++;
 
-    const fast = await this.fastPath(cls);
+    const fast = await this.fastPath(clsFinal);
     if (!fast.ok) {
-      await this.slowPath(cls);
+      await this.slowPath(clsFinal);
     }
   }
 
