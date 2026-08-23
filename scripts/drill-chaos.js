@@ -4,6 +4,7 @@
  *  S1 挂死（D3）：挂起主星进程（心跳停、进程在）→ 监督者强杀重启 → RUNNING
  *  S2 boot loop（坏 patch）：快速路径失败 → 阶梯用尽 → 顶班等待 + 修复报告生成
  *  S3 代班自愈：授权顶班 → 杀掉代班实例 → 监督者 10s 后自愈重启 → HTTP 恢复
+ *  S4 组合故障：杀主星 + 坏 patch 同时注入 → 阶梯跨故障恢复（或顶班链路）
  *
  * 安全边界：只动 profiles/sbx 与沙箱状态目录；代班用 :3180；storages 前后备份还原。
  *
@@ -156,6 +157,58 @@ async function main() {
     if (stHeal && stHeal.takeover && stHeal.takeover.pid && stHeal.takeover.pid !== takePid && httpOk(`http://127.0.0.1:${TAKEOVER_PORT}/`)) { healed = true; break; }
   }
   check("代班被杀后自愈重启（新 pid + HTTP 恢复）", healed, `old=${takePid} new=${stHeal && stHeal.takeover && stHeal.takeover.pid}`);
+
+  // ── S4: 组合故障（杀主星 + 坏 patch 同时注入，阶梯跨故障恢复）──
+  console.log("\n=== S4: 组合故障（杀主星 + 坏 patch）===");
+  // 先交回，回到 normal 模式
+  fs.writeFileSync(SBX_PATCH, CANONICAL_PATCH);
+  fs.writeFileSync(`${CTRL}/handback-request.json`, JSON.stringify({ ts: new Date().toISOString(), by: "drill" }));
+  let stNorm = null, hNorm = null;
+  for (let i = 0; i < 40; i++) {
+    await sleep(5000);
+    stNorm = readJson(STATE_FILE);
+    hNorm = readJson(HB_FILE);
+    if (stNorm && stNorm.primary.state === "RUNNING" && hNorm && hNorm.health === "ok") break;
+  }
+  check("S4 前置：交回后回到 normal", stNorm && stNorm.primary.state === "RUNNING" && hNorm && hNorm.health === "ok", stNorm && stNorm.primary.state);
+  const pidS4 = hNorm && hNorm.pid;
+  // 同时注入：杀主星 + 改坏 patch（无账目可回滚 → 阶梯应走到快照/用尽边界）
+  killTree(pidS4);
+  fs.writeFileSync(SBX_PATCH, CANONICAL_PATCH + "\n- insert: [\n    - id: broken\n");
+  let stS4 = null;
+  for (let i = 0; i < 60; i++) {
+    await sleep(5000);
+    stS4 = readJson(STATE_FILE);
+    // 阶梯可能用尽（进入顶班等待），也可能借助快照恢复——两者都是"有处置"而非挂死
+    if (stS4 && (stS4.primary.detail || "").includes("顶班授权")) break;
+    const hx = readJson(HB_FILE);
+    if (stS4 && stS4.primary.state === "RUNNING" && hx && hx.health === "ok" && hx.pid !== pidS4) break;
+  }
+  const recoveredS4 = stS4 && stS4.primary.state === "RUNNING";
+  const exhaustedS4 = stS4 && (stS4.primary.detail || "").includes("顶班授权");
+  check("S4 组合故障被处置（恢复或进入顶班等待）", recoveredS4 || exhaustedS4,
+    `state=${stS4 && stS4.primary.state} detail=${stS4 && stS4.primary.detail}`);
+  if (exhaustedS4) {
+    // 进入顶班等待说明阶梯用尽——人工修复 patch 后交回（验证组合故障的完整链路）
+    fs.writeFileSync(SBX_PATCH, CANONICAL_PATCH);
+    fs.writeFileSync(`${CTRL}/authorize-takeover.json`, JSON.stringify({ ts: new Date().toISOString(), by: "drill" }));
+    let stS4b = null;
+    for (let i = 0; i < 30; i++) {
+      await sleep(5000);
+      stS4b = readJson(STATE_FILE);
+      if (stS4b && stS4b.satellite.state === "TAKEOVER") break;
+    }
+    check("S4 顶班接管成功", stS4b && stS4b.satellite.state === "TAKEOVER", JSON.stringify(stS4b && stS4b.satellite));
+    fs.writeFileSync(`${CTRL}/handback-request.json`, JSON.stringify({ ts: new Date().toISOString(), by: "drill" }));
+    let stS4c = null;
+    for (let i = 0; i < 40; i++) {
+      await sleep(5000);
+      stS4c = readJson(STATE_FILE);
+      if (stS4c && stS4c.primary.state === "RUNNING" && stS4c.satellite.state === "STANDBY") break;
+    }
+    check("S4 交回恢复", stS4c && stS4c.primary.state === "RUNNING" && stS4c.satellite.state === "STANDBY", JSON.stringify(stS4c && { p: stS4c.primary.state, s: stS4c.satellite.state }));
+  }
+  fs.writeFileSync(SBX_PATCH, CANONICAL_PATCH);
 
   // ── 清理 ──────────────────────────────────────────────
   console.log("\n=== 清理 ===");

@@ -7,6 +7,8 @@
  *  - 会话层（P2 完整实现）：尝试新建测试会话；当前为占位，返回 unknown
  */
 const http = require("node:http");
+const fs = require("node:fs");
+const path = require("node:path");
 const hb = require("./heartbeat");
 
 function httpGet(url, timeoutMs) {
@@ -27,6 +29,8 @@ function httpGet(url, timeoutMs) {
  * 检查主星：进程 / HTTP / 心跳 health 三合一。
  * expectedPid：验证必须绑定"本次重启的新进程"——旧进程的心跳即使还在新鲜窗口内
  * 也不能算数（受控自重启/快速路径的假阳性根因）。
+ * L4 环境检查：状态目录必须可写（心跳/控制文件写入的前提）——磁盘满/权限异常时，
+ * 进程可能活着、心跳却写不进去，光看进程/HTTP 会漏报。
  */
 async function probePrimary(cfg, paths_, stateFile, expectedPid) {
   const heartbeat = hb.readHeartbeat(paths_.heartbeat, "primary");
@@ -37,6 +41,16 @@ async function probePrimary(cfg, paths_, stateFile, expectedPid) {
   const httpResult = httpCheck
     ? await httpGet(`http://127.0.0.1:${cfg.primaryPort}/`, cfg.fastPath.probeTimeoutMs || 3000)
     : { ok: true, statusCode: 0, httpDisabled: true };
+  // L4:状态目录可写性（轻量，无外部命令）
+  let envOk = true, envDetail = null;
+  try {
+    const probeFile = path.join(paths_.root, ".probe-write");
+    fs.writeFileSync(probeFile, "ok");
+    fs.rmSync(probeFile, { force: true });
+  } catch (e) {
+    envOk = false;
+    envDetail = `状态目录不可写: ${e.message}`;
+  }
   return {
     alive,
     pidMatch,
@@ -46,8 +60,10 @@ async function probePrimary(cfg, paths_, stateFile, expectedPid) {
     trusted,
     health: trusted && heartbeat ? heartbeat.health : "unknown",
     stale: !trusted || hb.isStale(heartbeat, cfg.heartbeat),
-    // ok 的判据（企划 §14.7 决策 2）：进程活 + （HTTP 通）+ 心跳新鲜可信 + health=ok + pid 绑定
-    ok: alive && httpResult.ok && heartbeat && trusted && pidMatch &&
+    envOk,
+    envDetail,
+    // ok 的判据（企划 §14.7 决策 2）：进程活 + （HTTP 通）+ 心跳新鲜可信 + health=ok + pid 绑定 + 环境可写
+    ok: alive && httpResult.ok && heartbeat && trusted && pidMatch && envOk &&
       !hb.isStale(heartbeat, cfg.heartbeat) && heartbeat.health === "ok",
   };
 }
