@@ -5,7 +5,7 @@
 ## 前置
 
 - Node.js >= 20（含 `node:zlib` 的 zstd 支持）
-- 全局安装 dsh：`npm install -g @deepseek-ai/dsh`（适配 0.1.0-rc.8）
+- 全局安装 dsh：`npm install -g @deepseek-ai/dsh`（适配 0.1.1-rc.2）
 - 确认 dsh 可运行：`dsh web` 能启动
 
 ## 配置
