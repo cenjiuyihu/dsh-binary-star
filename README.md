@@ -13,6 +13,8 @@
 - **受控自重启验证**：需重启生效的修改 → 受控重启 → 探针验证 → 失败自动回滚（根治"装完重启后全废"）
 - **代班接管（failover）**：阶梯用尽 → 授权/超时 → 卫星副本 profile 顶班（GUI + 修复智能体 + 会话种子续接）→ 交回时会话归档
 - **70+ 项沙箱演练**（`scripts/drill-*.js`）：故意搞炸系统来证明它能修
+- **一键运维脚本**：`setup-satellite.js`（卫星副本自动准备）/ `upgrade-dsh.js`（版本升级+失败自动回滚）/ `soak.js`（长时随机故障韧性测试）
+- **桌面壳监视器 v2**：事件流 / 日志查看 / 修复历史与统计 / 失败告警横幅 / 监督者崩溃自动重启（看门狗）/ 系统通知
 
 ## 架构
 
@@ -52,6 +54,9 @@ node scripts/verify-live.js
 | `node src/cli.js halt` | 暂停自动修复 |
 | `node src/cli.js journal <open\|commit\|rollback\|list>` | 变更账本 |
 | `node src/cli.js takeover --now\|--undo` | 人工授权顶班 / 请求交回 |
+| `node scripts/setup-satellite.js` | 卫星副本 profile 自动准备（幂等） |
+| `node scripts/upgrade-dsh.js <版本>` | dsh 升级 + 验证（失败自动回滚） |
+| `node scripts/soak.js [轮数]` | 长时随机故障韧性测试 |
 
 ## 文档
 
@@ -59,3 +64,4 @@ node scripts/verify-live.js
 - [docs/deploy.md](docs/deploy.md) — 部署与验收
 - [docs/runbook.md](docs/runbook.md) — 故障排查
 - [docs/drills.md](docs/drills.md) — 演练清单
+- [docs/chaos-methodology.md](docs/chaos-methodology.md) — 混沌演练方法论
