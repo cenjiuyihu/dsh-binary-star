@@ -64,6 +64,13 @@ if (!fs.existsSync(path.join(JUNCTION, "package.json"))) { console.error("juncti
 console.log("[3/5] node_modules junction 就绪");
 
 // 4) 追加 patch 行
+//    全新 profile 的 cordis.patch.yml 默认是 "[]" 占位行——追加真实条目前必须先移除
+//    （否则 [] 与 - insert: 构成两个无 --- 分隔的 YAML 根节点，dump-config 必然失败）
+{
+  const text = fs.readFileSync(PATCH, "utf8");
+  const cleaned = text.split("\n").filter((l) => l.trim() !== "[]").join("\n");
+  if (cleaned !== text) { fs.writeFileSync(PATCH, cleaned); console.log("[4/5] 已移除默认 [] 占位行"); }
+}
 fs.appendFileSync(PATCH, ROW);
 console.log("[4/5] 已追加 binary-star-host 行");
 

@@ -50,7 +50,11 @@ function loadConfig() {
   for (const k of ["dshHome", "stateDir", "primaryWorkdir", "satelliteWorkdir", "dshPkg"]) {
     if (typeof cfg[k] === "string") cfg[k] = expandPath(cfg[k]);
   }
-  if (cfg.dshPkg === "$NPM_ROOT") cfg.dshPkg = npmRoot() || cfg.dshPkg;
+  // $NPM_ROOT = npm 全局根；dshPkg 应为全局根下的 dsh 包目录（$NPM_ROOT/@deepseek-ai/dsh）
+  if (typeof cfg.dshPkg === "string" && cfg.dshPkg.includes("$NPM_ROOT")) {
+    const root = (npmRoot() || "").replace(/\\/g, "/");
+    cfg.dshPkg = cfg.dshPkg.replace(/\$NPM_ROOT/g, root);
+  }
   if (cfg.takeover && typeof cfg.takeover.sessionsRoot === "string") {
     cfg.takeover.sessionsRoot = expandPath(cfg.takeover.sessionsRoot);
   }

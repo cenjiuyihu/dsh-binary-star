@@ -1,6 +1,6 @@
 {
   "dshHome": "$HOME/.dsh",
-  "dshPkg": "$NPM_ROOT",
+  "dshPkg": "$NPM_ROOT/@deepseek-ai/dsh",
   "stateDir": "$HOME/.dsh/binary-star",
 
   "primaryProfile": "web",

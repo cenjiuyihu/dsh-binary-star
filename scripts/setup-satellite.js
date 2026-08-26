@@ -42,8 +42,10 @@ const PATCH_YML = `# \u53cc\u661f\u7cfb\u7edf\u536b\u661f profile \u8865\u4e01\u
 
 function mkdirP(dir) { fs.mkdirSync(dir, { recursive: true }); }
 
-function ensureJunction(junction, target, label) {
-  if (fs.existsSync(path.join(junction, "package.json")) || fs.existsSync(junction)) {
+function ensureJunction(junction, target, label, isScope = false) {
+  // scope 目录（如 @deepseek-ai）没有根 package.json，存在性探测只看目录本身
+  const probe = isScope ? junction : path.join(junction, "package.json");
+  if (fs.existsSync(probe) || fs.existsSync(junction)) {
     // 已存在（文件/目录/junction）→ 校验指向
     try {
       const t = fs.readlinkSync(junction);
@@ -64,7 +66,7 @@ function ensureJunction(junction, target, label) {
     `New-Item -ItemType Junction -Path "${junction}" -Target "${target}" -Force | Out-Null`,
   ], { encoding: "utf8", stdio: ["pipe", "pipe", "pipe"] });
   if (r.status !== 0) { console.error(`[!] ${label} junction 创建失败: ${String(r.stderr || r.stdout).trim()}`); return false; }
-  if (!fs.existsSync(path.join(junction, "package.json"))) { console.error(`[!] ${label} junction 创建后校验失败`); return false; }
+  if (!fs.existsSync(probe)) { console.error(`[!] ${label} junction 创建后校验失败`); return false; }
   console.log(`[ok] ${label} junction 已创建 → ${target}`);
   return true;
 }
@@ -94,7 +96,7 @@ console.log("[2/5] package.json / cordis.yml / cordis.patch.yml 已写入");
 // 3) node_modules junction ×2（幂等）
 const NM = path.join(PROFILE_DIR, "node_modules");
 mkdirP(NM);
-const j1 = ensureJunction(path.join(NM, "@deepseek-ai"), path.join(WEB_NM, "@deepseek-ai"), "@deepseek-ai");
+const j1 = ensureJunction(path.join(NM, "@deepseek-ai"), path.join(WEB_NM, "@deepseek-ai"), "@deepseek-ai", true);
 const j2 = ensureJunction(path.join(NM, "dsh-binary-star-host"), PLUGIN, "dsh-binary-star-host");
 if (!j1 || !j2) process.exit(1);
 console.log("[3/5] node_modules junction 就绪");

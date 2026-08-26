@@ -40,12 +40,14 @@ check("web 组合树可解析（dump-config 退出 0）", dump.status === 0, `st
 check("组合树含 binary-star-host 行", dump.status === 0 && dump.stdout.includes("binary-star-host"));
 
 // 2) junction
+const norm = (p) => String(p).replace(/\\/g, "/").toLowerCase();
 const jExists = fs.existsSync(path.join(JUNCTION, "package.json"));
 const jTarget = (() => {
   try { return fs.readlinkSync(JUNCTION); } catch { return null; }
 })();
 check("web/node_modules junction 就绪", jExists, JUNCTION);
-check("junction 指向插件目录", jTarget && jTarget.replace(/\\/g, "/").toLowerCase() === PLUGIN.toLowerCase(), String(jTarget));
+// 双向归一化（\ 与 /）后再比较，避免 Windows 上 f:/ vs f:\ 误报
+check("junction 指向插件目录", jTarget && norm(jTarget) === norm(PLUGIN), String(jTarget));
 
 // 3) patch 行
 const patchText = fs.existsSync(PATCH) ? fs.readFileSync(PATCH, "utf8") : "";
