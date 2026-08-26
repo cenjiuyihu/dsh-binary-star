@@ -95,16 +95,22 @@ function ensureStateDirs(cfg) {
 
 /** dsh 主进程启动命令（来自 P0 审计：node <pkg>/lib/bin.js --profile <profile>） */
 function primaryCommand(cfg) {
+  const env = {
+    ...process.env,
+    DSH_BINARY_ROLE: "primary",
+    DSH_BINARY_STATE: cfg.stateDir,
+    DSH_BINARY_HEARTBEAT_MS: String(cfg.heartbeat.intervalMs || 5000),
+  };
+  // Win32 下监督者以无窗口方式（windowsHide）拉起主星 → dsh 原生目录选择器
+  // （IFileOpenDialog 模态对话框）无法显示到交互桌面（前台激活限制）→ 25s 超时"按钮无响应"。
+  // config.picker="browse" 时注入 SSH_CONNECTION 标志，让 dsh 的 auto 决策
+  // （loopback + SSH → browse）改用页面内目录浏览。只影响监督者拉起的实例。
+  if (cfg.picker === "browse") env.SSH_CONNECTION = "dsh-binary-star";
   return {
     cmd: process.execPath, // node
     args: [path.join(cfg.dshPkg, "lib", "bin.js"), "--profile", cfg.primaryProfile],
     cwd: cfg.primaryWorkdir,
-    env: {
-      ...process.env,
-      DSH_BINARY_ROLE: "primary",
-      DSH_BINARY_STATE: cfg.stateDir,
-      DSH_BINARY_HEARTBEAT_MS: String(cfg.heartbeat.intervalMs || 5000),
-    },
+    env,
   };
 }
 

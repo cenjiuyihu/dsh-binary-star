@@ -6,6 +6,7 @@
   "primaryProfile": "web",
   "primaryWorkdir": "$CWD",
   "primaryPort": 3080,
+  "picker": "browse",
 
   "satelliteProfile": "satellite",
   "satelliteWorkdir": "$HOME/.dsh/sat-workspace",

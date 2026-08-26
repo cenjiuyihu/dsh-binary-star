@@ -18,6 +18,7 @@
 | `dshPkg` | dsh 包位置（默认 `$NPM_ROOT` 自动解析） |
 | `stateDir` | 双星状态目录 |
 | `primaryProfile` / `primaryWorkdir` / `primaryPort` | 主星 profile / 工作目录 / 端口 |
+| `picker` | 目录选择器：`browse`（页面内浏览，Win32 双星场景推荐）或留空（dsh 原生行为） |
 | `snapshot.scope` | 保护范围（快照/还原的对象） |
 
 ## 部署宿主插件（自动备份 + 验证，可回滚）
@@ -38,33 +39,6 @@ node scripts/verify-live.js
 ```
 
 只读检查：组合树可解析且含新行 / junction / patch 行 / 心跳存在+健康+新鲜 / 状态文件。监督者未启动时 token=none 与 state.json 缺失为预期。
-
-## 升级 dsh 版本（兼容流程）
-
-```bash
-# 1. 暂停自动修复 + 打升级前快照
-New-Item -ItemType File control/halt
-node src/cli.js snapshot baseline-pre-upgrade
-
-# 2. 升级 npm 全局包
-npm install -g @deepseek-ai/dsh@<新版本>
-
-# 3. 客户端定制若被覆盖，重跑 ui-patch（本仓库不携带；部署方自己的脚本）
-#    anchor 失配 = 新版本改了 bundle 结构，需按新结构更新补丁
-
-# 4. 冒烟：组合树可解析
-node <dsh>/lib/bin.js --profile web --dump-config
-
-# 5. 受控重启验证（写 restart-request.json，监督者执行重启+探针）
-node src/cli.js journal open --desc "dsh 升级验证"
-# 写 control/restart-request.json {journalEntryId, desc} → 监督者受控重启 → 探针
-node src/cli.js journal commit <id>
-
-# 6. 验收
-node scripts/verify-live.js
-```
-
-> 注意：受控重启会短暂中断当前对话（秒级~1 分钟）；若端口未及时释放，阶梯会自动重试，属预期行为。
 
 ## 卫星副本 profile
 
@@ -93,3 +67,15 @@ profiles/satellite/
 ```bash
 node src/cli.js status   # 两星状态/心跳/账本/快照/上次修复
 ```
+
+## 已知问题：Win32 下目录选择器不可见
+
+经监督者启动的主星在 Windows 上点击"选择工作区"时，dsh 默认使用**原生文件夹对话框**
+（`IFileOpenDialog`，`dsh-host-directory-picker-auto` 在 win32 + loopback 下解析为
+native 后端）。但监督者以无窗口方式（`windowsHide`）拉起主星，对话框无法显示到
+交互桌面（Windows 前台激活限制）→ 25s 超时 → 按钮看起来"无响应"（输入框 readonly
+是 dsh 设计：未选工作区不能对话）。
+
+**解决**：`config` 设置 `"picker": "browse"`（默认配置已启用）——监督者启动主星时注入
+`SSH_CONNECTION` 标志，让 dsh 的 auto 决策（loopback + SSH → browse）改用**页面内
+目录浏览**。该开关只影响监督者拉起的实例；手动 `dsh web` 仍使用原生对话框。
