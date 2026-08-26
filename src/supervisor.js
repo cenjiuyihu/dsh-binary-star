@@ -93,9 +93,33 @@ class Supervisor {
     this.spawnPrimary();
   }
 
+  /**
+   * 野生实例防护：若主星端口被非本监督者管理的进程占用（手动启动的 dsh、
+   * 其他环境/其他盘的实例），先终止它——否则重启的主星必然 EADDRINUSE
+   * 启动失败，且该错误会被 cordis 包装成"插件树加载失败（include）"误导诊断
+   * （2026-08-26 事故：TRAE 部署的 E 盘 dsh 源码版抢占 :3080，导致受控重启
+   * 连续失败、阶梯用尽、修复报告误判为配置问题）。
+   */
+  async clearForeignPortOwner() {
+    try {
+      const port = this.cfg.primaryPort || 3080;
+      if (this.cfg.probe && this.cfg.probe.httpCheck === false) return;
+      const portPid = this.findPidByPort(port);
+      const ownPid = this.primaryProc && this.primaryProc.pid;
+      if (portPid && portPid !== process.pid && portPid !== ownPid) {
+        this._log(`发现 :${port} 被野生进程 pid=${portPid} 占用（非本监督者管理），终止之`);
+        killTree(portPid);
+        await sleep(3000);
+      }
+    } catch (e) {
+      this._log(`clearForeignPortOwner 异常: ${e.message}`);
+    }
+  }
+
   /** 快速路径：重启 + 探针验证（成功判据=探针通过，且绑定新进程 pid） */
   async fastPath(classification) {
     this._log(`快速路径开始（${classification}），尝试 ${this.cfg.fastPath.restartAttempts} 次`);
+    await this.clearForeignPortOwner();
     for (let i = 1; i <= this.cfg.fastPath.restartAttempts; i++) {
       this.restartPrimary();
       const newProc = this.primaryProc;
@@ -130,6 +154,7 @@ class Supervisor {
       trigger: classification,
       log: (role, line) => require("./paths").log(this.paths, role, line),
       restart: async () => {
+        await this.clearForeignPortOwner(); // 野生实例防护（阶梯每步重启前）
         this.restartPrimary();
         verifyPid = this.primaryProc && this.primaryProc.pid;
         await sleep(this.cfg.fastPath.verifyWaitMs || 30000);
@@ -330,6 +355,7 @@ class Supervisor {
     this._log(`受控自重启请求: 账目 ${req.journalEntryId} (${req.desc || "无描述"}) 第 ${attempts + 1} 次`);
     this._setState("primary", "VERIFYING", `受控自重启验证（${req.journalEntryId}）`);
 
+    await this.clearForeignPortOwner(); // 野生实例防护（受控重启前）
     this.restartPrimary();
     const newProc = this.primaryProc;
     await sleep(this.cfg.fastPath.verifyWaitMs || 30000);
