@@ -1,11 +1,12 @@
 "use strict";
 /**
  * 双星系统 CLI（dsh-binary）。
- * 命令: start | status | stop | repair [--now] | snapshot <tag> | halt | takeover | version
+ * 命令: start | status | stop | repair [--now] | snapshot <tag> | halt | takeover | session-repair | version
  * 纯 Node 实现（执行策略禁 ps1；Windows 直接跑 node）。
  */
 const path = require("node:path");
 const fs = require("node:fs");
+const { spawnSync } = require("node:child_process");
 const paths = require("./paths");
 const hb = require("./heartbeat");
 const state = require("./state");
@@ -189,14 +190,27 @@ async function main() {
       console.log(`dsh-binary 0.1.0 (dsh ${snapshot.dshVersion(cfg.dshPkg)})`);
       break;
     }
+    case "session-repair": {
+      // 修复卡死的会话（API 400 孤儿 tool_calls / error turn 残留）
+      // 转发给 scripts/session-repair.js；修复后需外部重启主星清会话缓存。
+      const script = path.join(__dirname, "..", "scripts", "session-repair.js");
+      const r = spawnSync(process.execPath, [script, ...process.argv.slice(3)], {
+        encoding: "utf8", timeout: 60000, stdio: ["inherit", "pipe", "pipe"],
+      });
+      process.stdout.write(r.stdout || "");
+      process.stderr.write(r.stderr || "");
+      process.exit(r.status || 0);
+      break;
+    }
     default: {
-      console.log(`用法: dsh-binary <start|status|stop|snapshot <tag>|repair --now|halt|version>
+      console.log(`用法: dsh-binary <start|status|stop|snapshot <tag>|repair --now|halt|session-repair <会话目录>|version>
   start     启动监督者（拉起主星并监视；卫星在 P2 接入）
   status    双星状态一览
   stop      停掉监督者拉起的双星进程树
   snapshot  打快照（tag: baseline|pre|daily|manual）
   repair --now 手动触发修复阶梯
-  halt      暂停自动修复`);
+  halt      暂停自动修复
+  session-repair <会话目录> [--turn N] 修复卡死的会话（error turn 清理，备份自动）`);
     }
   }
 }

@@ -185,7 +185,17 @@ async function runLadder(ctx) {
         return { ok: true, detail: `已重装 dsh@${lkg}（来自快照 ${snaps[0].name}）` };
       },
     },
-    { no: 6, name: "顶班", run: () => ({ ok: false, detail: "P2 实现：卫星接管 :3080" }) },
+    {
+      no: 6, name: "顶班",
+      run: () => ({
+        // 顶班编排在监督者层（supervisor.slowPath → pendingTakeover → takeoverFlow），
+        // 不在本阶梯内执行：阶梯用尽后由监督者进入顶班等待（授权/超时后卫星接管）。
+        // 本步保持失败语义，是为了让修复报告如实反映"阶梯内部未能恢复"，
+        // 同时避免误导（2026-08-26 事故报告曾显示"第 6 步 P2 占位"）。
+        ok: false,
+        detail: "顶班由监督者编排：阶梯用尽后进入顶班等待（pendingTakeover），授权或超时后由卫星副本接管 :3080",
+      }),
+    },
   ];
 
   for (const step of steps) {
