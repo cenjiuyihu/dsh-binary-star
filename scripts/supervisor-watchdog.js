@@ -6,8 +6,11 @@
  * 进程树）后，双星系统彻底失明——没有任何组件会自动拉起监督者。桌面壳看门狗
  * 只覆盖"壳自己拉起的监督者"，纯 CLI 模式没有守护。
  *
- * 本脚本：循环拉起 `cli.js start`，监督者进程意外退出（崩溃/被杀）后延迟重启，
- * 记录重启日志。配合系统的单实例锁，不会与已有监督者冲突。
+ * 使用语义（手动常驻，不依附壳）：
+ *   - 启动：`node scripts/supervisor-watchdog.js` —— 常驻运行，监督者崩溃后自动重启
+ *   - 关闭：`dsh-binary stop`（受控停止感知：检测 control/shutdown 后随监督者退出）
+ *     或 Ctrl+C / SIGTERM
+ *   - 崩溃重启：监督者意外退出（非受控停止）→ 延迟 interval 秒后自动拉起
  *
  * 用法:
  *   node scripts/supervisor-watchdog.js [--interval 5] [--log <file>] [--max-restarts N]
@@ -41,6 +44,21 @@ function log(line) {
 
 let restarts = 0;
 let stopping = false;
+let shutdownSeen = false; // 受控停止感知:检测 control/shutdown → 不重启,随监督者退出
+
+// 监视 control/shutdown(受控停止感知):
+// 用户执行 `dsh-binary stop` 时写入该文件 → 监督者消费并退出;
+// watchdog 看到后进入停止模式,不再重启监督者,一起退出——保证
+// "手动启动常驻,直到手动关闭"的语义(崩溃自动重启,手动停止不重启)。
+const CONTROL_DIR = path.join(STATE, "control");
+const SHUTDOWN_FILE = path.join(CONTROL_DIR, "shutdown");
+const shutdownWatch = setInterval(() => {
+  if (fs.existsSync(SHUTDOWN_FILE)) {
+    shutdownSeen = true;
+    log("检测到 control/shutdown（受控停止），守护进程随监督者一起退出，不再重启");
+    clearInterval(shutdownWatch);
+  }
+}, 2000);
 
 function runSupervisor() {
   log(`拉起监督者: ${CLI}`);
@@ -53,7 +71,10 @@ function runSupervisor() {
   child.stdout.on("data", (d) => log(`[supervisor] ${String(d).trim().slice(0, 200)}`));
   child.stderr.on("data", (d) => log(`[supervisor:err] ${String(d).trim().slice(0, 200)}`));
   child.on("exit", (code, sig) => {
-    if (stopping) return;
+    if (stopping || shutdownSeen) {
+      log("守护进程退出（受控停止或收到信号）");
+      process.exit(0);
+    }
     restarts += 1;
     log(`监督者退出 code=${code} sig=${sig}（第 ${restarts} 次重启）`);
     if (maxRestarts > 0 && restarts > maxRestarts) {
