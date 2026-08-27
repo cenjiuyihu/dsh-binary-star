@@ -45,6 +45,16 @@ function log(line) {
 let restarts = 0;
 let stopping = false;
 let shutdownSeen = false; // 受控停止感知:检测 control/shutdown → 不重启,随监督者退出
+let currentChild = null; // 当前由本守护拉起的监督者进程(监视模式下为空)
+
+// 检测是否已有监督者在运行(锁文件 + pid 存活)
+function supervisorExists() {
+  try {
+    const lock = JSON.parse(fs.readFileSync(path.join(STATE, "locks", "supervisor.lock"), "utf8"));
+    if (!lock || !lock.pid) return false;
+    try { process.kill(lock.pid, 0); return true; } catch (e) { return e.code === "EPERM"; }
+  } catch { return false; }
+}
 
 // 监视 control/shutdown(受控停止感知):
 // 用户执行 `dsh-binary stop` 时写入该文件 → 监督者消费并退出;
@@ -57,6 +67,7 @@ const shutdownWatch = setInterval(() => {
     shutdownSeen = true;
     log("检测到 control/shutdown（受控停止），守护进程随监督者一起退出，不再重启");
     clearInterval(shutdownWatch);
+    if (!currentChild) process.exit(0); // 监视模式(无子进程)下直接退出
   }
 }, 2000);
 
@@ -68,9 +79,11 @@ function runSupervisor() {
     stdio: ["ignore", "pipe", "pipe"],
     windowsHide: true,
   });
+  currentChild = child;
   child.stdout.on("data", (d) => log(`[supervisor] ${String(d).trim().slice(0, 200)}`));
   child.stderr.on("data", (d) => log(`[supervisor:err] ${String(d).trim().slice(0, 200)}`));
   child.on("exit", (code, sig) => {
+    currentChild = null;
     if (stopping || shutdownSeen) {
       log("守护进程退出（受控停止或收到信号）");
       process.exit(0);
@@ -87,8 +100,27 @@ function runSupervisor() {
   return child;
 }
 
+// 启动：若已有监督者在运行（如手动启动、桌面壳拉起、上次遗留），
+// 转为监视模式——不重复拉起，待其退出后由本守护接管。
+// 否则直接拉起。
+function waitForExistingSupervisorGone() {
+  setTimeout(() => {
+    if (supervisorExists()) {
+      waitForExistingSupervisorGone();
+    } else {
+      log("已有监督者已退出，由本守护接管拉起");
+      runSupervisor();
+    }
+  }, 3000);
+}
+
 process.on("SIGINT", () => { stopping = true; process.exit(0); });
 process.on("SIGTERM", () => { stopping = true; process.exit(0); });
 
 log(`监督者守护启动（interval=${intervalSec}s maxRestarts=${maxRestarts} log=${logFile}）`);
-runSupervisor();
+if (supervisorExists()) {
+  log("检测到已有监督者在运行，进入监视模式（待其退出后由本守护接管）");
+  waitForExistingSupervisorGone();
+} else {
+  runSupervisor();
+}
