@@ -1,15 +1,17 @@
 {
+  "// 说明": "双星系统默认配置（P0 审计产出）。路径均可用环境变量覆盖：DSH_BINARY_CONFIG（配置文件路径）、DSH_BINARY_STATE（状态目录）。",
+
   "dshHome": "$HOME/.dsh",
   "dshPkg": "$NPM_ROOT/@deepseek-ai/dsh",
   "stateDir": "$HOME/.dsh/binary-star",
 
   "primaryProfile": "web",
-  "primaryWorkdir": "$CWD",
+  "primaryWorkdir": "$HOME",
   "primaryPort": 3080,
   "picker": "browse",
 
   "satelliteProfile": "satellite",
-  "satelliteWorkdir": "$HOME/.dsh/sat-workspace",
+  "satelliteWorkdir": "$HOME/.binary-star/sat-workspace",
   "satellitePort": 3081,
 
   "heartbeat": {
@@ -50,9 +52,9 @@
   },
 
   "uiPatch": {
-    "script": "",
-    "backup": "",
-    "note": "ui-patch 是部署方的本地 GUI 定制（不属于本项目的分发内容）；如有请在此配置"
+    "script": "D:/DSH/ui-patch/patch.js",
+    "backup": "D:/DSH/ui-backup",
+    "note": "重装 npm 全局包后必须重跑此脚本（补丁对象是 shipped 安装的客户端 bundle）"
   },
 
   "takeover": {
@@ -61,5 +63,10 @@
     "autoAfterMs": 1800000,
     "seedLastN": 40,
     "sessionsRoot": "$HOME/.dsh/sessions"
+  },
+
+  "autoResume": {
+    "enabled": true,
+    "message": "[系统] 主星已重启，会话已自动恢复，请继续。"
   }
 }

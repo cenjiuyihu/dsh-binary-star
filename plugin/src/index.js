@@ -17,7 +17,7 @@
 //  DSH_BINARY_TOKEN            监督者下发的归属 token（防残留/串扰进程抢写心跳文件）
 //  DSH_BINARY_SELFCHECK_PATCH  自检的 patch 文件（相对 DSH_HOME；默认 profiles/web/cordis.patch.yml）
 //  DSH_BINARY_SELFCHECK_MS     自检间隔（默认 15000）
-import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync } from 'node:fs'
+import { writeFileSync, mkdirSync, renameSync, existsSync, readFileSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { homedir } from 'node:os'
 
@@ -105,9 +105,63 @@ export function apply(ctx) {
     write()
     const hbTimer = setInterval(write, intervalMs)
     const scTimer = setInterval(runSelfCheck, selfCheckMs)
+
+    // —— 活跃会话跟踪（2026-08-31 新增）——
+    // 目的：主星被重启后，监督者需要知道"用户最后在跟哪个会话对话"，
+    // 以便重启后自动恢复（auto-resume）。零依赖实现：定时扫描 sessions 目录，
+    // 把最近有写入的会话记到 stateDir/last-session.json。
+    // 说明：不依赖 dsh 服务，与心跳同层（进程活着就扫）。
+    const sessionsRoot = path.join(dshHome, 'sessions')
+    let lastTracked = null
+    const scanSessions = () => {
+      try {
+        if (!existsSync(sessionsRoot)) return
+        let best = null // {dir, mtime, size}
+        for (const ws of readdirSafe(sessionsRoot)) {
+          const wsDir = path.join(sessionsRoot, ws)
+          if (!statIsDir(wsDir)) continue
+          for (const sess of readdirSafe(wsDir)) {
+            const f = path.join(wsDir, sess, 'session.jsonl.zstd')
+            if (!existsSync(f)) continue
+            const st = safeStat(f)
+            if (!st || st.size < 1024) continue // 排除 blank/刚创建的会话
+            if (!best || st.mtimeMs > best.mtime) best = { dir: path.join(wsDir, sess), mtime: st.mtimeMs, size: st.size }
+          }
+        }
+        if (!best) return
+        const sessionId = path.basename(best.dir)
+        const rec = { sessionId, updatedAt: best.mtime, path: best.dir, ts: Date.now() }
+        if (!lastTracked || lastTracked.sessionId !== rec.sessionId || Math.abs(lastTracked.updatedAt - rec.updatedAt) > 30000) {
+          const target = path.join(stateDir, 'last-session.json')
+          const tmp = `${target}.tmp`
+          writeFileSync(tmp, JSON.stringify(rec))
+          renameSync(tmp, target)
+          lastTracked = rec
+        }
+      } catch (err) {
+        try { console.error(`[binary-star] session scan failed: ${err.message}`) } catch {}
+      }
+    }
+    scanSessions()
+    const ssTimer = setInterval(scanSessions, 10000)
+
     return () => {
       clearInterval(hbTimer)
       clearInterval(scTimer)
+      clearInterval(ssTimer)
     }
   })
+}
+
+/** 目录安全读取（不存在/无权限返回空数组） */
+function readdirSafe(dir) {
+  try { return readdirSync(dir) } catch { return [] }
+}
+/** stat 安全包装 */
+function safeStat(p) {
+  try { return statSync(p) } catch { return null }
+}
+function statIsDir(p) {
+  const st = safeStat(p)
+  return st ? st.isDirectory() : false
 }
